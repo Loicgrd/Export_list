@@ -36,58 +36,56 @@ st.title("Générateur d'Exports CEE")
 tab_generateur, tab_reglages = st.tabs(["📊 Générateur d'Exports", "⚙️ Base de données Bailleurs"])
 
 # ==========================================
-# ONGLET 2 : GESTION DANS GOOGLE SHEETS
+# ONGLET 2 : GESTION DANS GOOGLE SHEETS (AMÉLIORÉ)
 # ==========================================
 with tab_reglages:
     st.header("Base de données 'Confort'")
-    st.markdown("Ces bailleurs sont sauvegardés dans votre Google Sheet.")
     
-    col_search, col_list = st.columns([1, 1])
-    
-    with col_search:
-        st.subheader("🔍 Ajouter à la base")
-        query = st.text_input("Entrez le SIREN ou le nom de l'organisme :")
+    # --- SECTION SUPPRESSION ---
+    st.subheader("🗑️ Supprimer des bailleurs")
+    if not df_bailleurs_gsheet.empty:
+        # On utilise une multiselect pour choisir les bailleurs à supprimer
+        bailleurs_a_supprimer = st.multiselect("Sélectionner les bailleurs à supprimer :", options=df_bailleurs_gsheet.iloc[:, 0].tolist())
         
-        if query:
-            response = requests.get(f"https://recherche-entreprises.api.gouv.fr/search?q={query}")
-            if response.status_code == 200:
-                results = response.json().get("results", [])
-                if results:
-                    options = {f"{r.get('nom_complet')} (SIREN: {r.get('siren')})": r for r in results}
-                    selected_label = st.selectbox("Sélectionnez l'organisme :", list(options.keys()))
-                    selected_data = options[selected_label]
-                    
-                    siren_api = selected_data.get('siren')
-                    nom_defaut = selected_data.get('sigle') or selected_data.get('nom_raison_sociale')
-                    
-                    nom_excel = st.text_input("Nom exact dans l'Excel :", value=nom_defaut)
-                    
-                    if st.button("➕ Enregistrer dans le Google Sheet", type="primary"):
-                        if nom_excel in dict_siren:
-                            st.warning("Ce bailleur est déjà dans la base !")
-                        else:
-                            # 1. Créer la nouvelle ligne
-                            nouvelle_ligne = pd.DataFrame([{
-                                df_bailleurs_gsheet.columns[0]: nom_excel, 
-                                df_bailleurs_gsheet.columns[1]: siren_api
-                            }])
-                            # 2. Ajouter à l'ancien tableau
-                            df_updated = pd.concat([df_bailleurs_gsheet, nouvelle_ligne], ignore_index=True)
-                            # 3. Écrire dans le Google Sheet !
-                            conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Confort", data=df_updated)
-                            
-                            # 4. Vider le cache pour forcer la relecture
-                            st.cache_data.clear()
-                            st.success(f"{nom_excel} a été ajouté définitivement !")
-                            st.rerun()
-                else:
-                    st.warning("Aucun résultat.")
-            else:
-                st.error("Erreur API.")
+        if st.button("Supprimer la sélection", type="primary"):
+            df_updated = df_bailleurs_gsheet[~df_bailleurs_gsheet.iloc[:, 0].isin(bailleurs_a_supprimer)]
+            conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Confort", data=df_updated)
+            st.cache_data.clear()
+            st.rerun()
 
-    with col_list:
-        st.subheader("📋 Bailleurs enregistrés")
-        st.dataframe(df_bailleurs_gsheet, use_container_width=True)
+    st.divider()
+
+    # --- SECTION MULTI-AJOUT ---
+    st.subheader("➕ Ajouter plusieurs bailleurs (par SIREN)")
+    liste_sirens_brut = st.text_area("Collez vos SIREN ici (séparés par des virgules ou retours à la ligne) :")
+    
+    if st.button("Rechercher et Ajouter la liste"):
+        # Nettoyage des SIREN
+        sirens = [s.strip() for s in liste_sirens_brut.replace('\n', ',').split(',') if s.strip()]
+        
+        nouveaux_bailleurs = []
+        for s in sirens:
+            resp = requests.get(f"https://recherche-entreprises.api.gouv.fr/search?q={s}")
+            if resp.status_code == 200 and resp.json().get("results"):
+                res = resp.json()["results"][0]
+                nouveaux_bailleurs.append({
+                    df_bailleurs_gsheet.columns[0]: res.get('sigle') or res.get('nom_raison_sociale'),
+                    df_bailleurs_gsheet.columns[1]: res.get('siren')
+                })
+        
+        if nouveaux_bailleurs:
+            df_new = pd.DataFrame(nouveaux_bailleurs)
+            df_updated = pd.concat([df_bailleurs_gsheet, df_new], ignore_index=True)
+            conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Confort", data=df_updated)
+            st.cache_data.clear()
+            st.success(f"{len(nouveaux_bailleurs)} bailleurs ajoutés !")
+            st.rerun()
+        else:
+            st.warning("Aucun bailleur trouvé pour ces SIREN.")
+
+    st.divider()
+    st.subheader("📋 Liste actuelle")
+    st.dataframe(df_bailleurs_gsheet, use_container_width=True)
 
 # ==========================================
 # ONGLET 1 : GÉNÉRATEUR D'EXCEL
