@@ -18,22 +18,17 @@ if uploaded_file is not None:
         st.success(f"Fichier chargé avec succès ! ({len(df_source)} lignes trouvées)")
 
         # ==========================================
-        # TRAITEMENT 1 : LISTE À EXPORTER
+        # NETTOYAGE ET FORMATAGE DES DATES
         # ==========================================
-        df_export = df_source.copy()
-        
-        # Exemple de filtre métier (à adapter selon ton besoin exact)
-        # Ici on retire par exemple les dossiers "Non concerné"
-        if 'Contrôle' in df_export.columns:
-            df_export = df_export[df_export['Contrôle'] != 'Non concerné']
-        
-        # Si tu as une colonne "Prioritaire", tu peux trier ici :
-        # df_export = df_export.sort_values(by='Prioritaire', na_position='last')
+        colonnes_dates = ['Date réception', "Date d'engagement", 'Date prévisionnelle de réalisation', 'Date réelle de réalisation']
+        for col in colonnes_dates:
+            if col in df_source.columns:
+                # Conversion en datetime puis extraction de la date pure (supprime les heures)
+                df_source[col] = pd.to_datetime(df_source[col], errors='coerce').dt.date
 
         # ==========================================
-        # TRAITEMENT 2 : CONFORT
+        # TRAITEMENT 1 : CONFORT
         # ==========================================
-        # Définition des bailleurs cibles pour l'onglet Confort
         bailleurs_cibles = [
             "INOLYA", 
             "IMMOBILIERE RHONE ALPES SA D'HLM", 
@@ -41,7 +36,6 @@ if uploaded_file is not None:
             "SEINE-SAINT-DENIS HABITAT"
         ]
         
-        # Dictionnaire de mapping SIREN (à compléter ou à remplacer par un merge avec un Excel de réf)
         dict_siren = {
             "INOLYA": "780705703",
             "IMMOBILIERE RHONE ALPES SA D'HLM": "661750067",
@@ -51,17 +45,31 @@ if uploaded_file is not None:
 
         df_confort = pd.DataFrame()
         if 'Bénéficiaire' in df_source.columns:
-            # Filtrer sur les bailleurs
+            # Filtrer pour ne garder que les bailleurs cibles
             df_confort = df_source[df_source['Bénéficiaire'].isin(bailleurs_cibles)].copy()
             
-            # Création des colonnes spécifiques à "Confort"
+            # Création des colonnes spécifiques
             df_confort.insert(0, 'SIREN', df_confort['Bénéficiaire'].map(dict_siren))
-            df_confort.insert(1, 'BS Confort', df_confort['Bénéficiaire']) # À adapter si le nom diffère
+            df_confort.insert(1, 'BS Confort', df_confort['Bénéficiaire'])
             
-            # Sélection et réorganisation des colonnes cibles
+            # Sélection et ordre des colonnes
             colonnes_attendues = ['SIREN', 'BS Confort', 'Date réception', 'Numéro dossier', 'Bénéficiaire', 'Stade']
             colonnes_dispos = [c for c in colonnes_attendues if c in df_confort.columns]
             df_confort = df_confort[colonnes_dispos]
+
+        # ==========================================
+        # TRAITEMENT 2 : LISTE À EXPORTER (SANS DOUBLONS)
+        # ==========================================
+        df_export = df_source.copy()
+        
+        # Filtre sur le statut de contrôle si nécessaire
+        if 'Contrôle' in df_export.columns:
+            df_export = df_export[df_export['Contrôle'] != 'Non concerné']
+        
+        # EXCLUSION DES LIGNES CONFORT : On supprime de l'export les dossiers présents dans Confort
+        if not df_confort.empty and 'Numéro dossier' in df_export.columns and 'Numéro dossier' in df_confort.columns:
+            liste_dossiers_confort = df_confort['Numéro dossier'].dropna().unique()
+            df_export = df_export[~df_export['Numéro dossier'].isin(liste_dossiers_confort)]
 
         # ==========================================
         # INTERFACE DE TÉLÉCHARGEMENT
@@ -72,12 +80,12 @@ if uploaded_file is not None:
         # --- Bloc Gauche : Liste à exporter ---
         with col1:
             st.subheader("📊 Liste à exporter")
-            st.text(f"{len(df_export)} lignes prêtes pour l'export.")
+            st.text(f"{len(df_export)} lignes (Excluant les dossiers envoyés dans Confort).")
             st.dataframe(df_export.head(3))
             
-            # Conversion en Excel en mémoire
+            # Génération du fichier Excel avec forçage du format date natif sans heure
             buffer_export = io.BytesIO()
-            with pd.ExcelWriter(buffer_export, engine='xlsxwriter') as writer:
+            with pd.ExcelWriter(buffer_export, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
                 df_export.to_excel(writer, index=False, sheet_name='Liste à exporter')
             
             st.download_button(
@@ -94,9 +102,8 @@ if uploaded_file is not None:
             st.text(f"{len(df_confort)} lignes identifiées.")
             st.dataframe(df_confort.head(3))
             
-            # Conversion en Excel en mémoire
             buffer_confort = io.BytesIO()
-            with pd.ExcelWriter(buffer_confort, engine='xlsxwriter') as writer:
+            with pd.ExcelWriter(buffer_confort, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
                 df_confort.to_excel(writer, index=False, sheet_name='Confort')
                 
             st.download_button(
