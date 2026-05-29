@@ -13,7 +13,7 @@ st.set_page_config(page_title="Générateur d'Exports CEE", layout="wide")
 # CONNEXION AU GOOGLE SHEET
 # ==========================================
 # L'URL de ton fichier de base de données
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1pkj6frncXmzUUVAClAWp63HY_UpQUahOCLz19w-UseI/edit"
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1pkj6frncXmzUUVAClAWp63HY_UpQUahOCLz19w-UseI/edit?usp=sharing"
 
 # Initialisation de la connexion GSheets
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -22,20 +22,16 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 @st.cache_data(ttl=10)
 def load_bailleurs():
     try:
-        # On lit l'onglet sans forcer "usecols" pour éviter le Bad Request 400
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Confort")
+        # On cible explicitement l'onglet "Confort"
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Confort", usecols=[0, 1])
         
         # S'il n'y a pas de colonnes, on crée une structure par défaut
         if df.empty or len(df.columns) < 2:
             df = pd.DataFrame(columns=["Nom du Bailleur", "SIREN"])
             
-        # On force la sélection des deux premières colonnes de façon sécurisée
-        df = df.iloc[:, :2]
         df = df.dropna(subset=[df.columns[0]])
-        
         # On crée un dictionnaire { "NOM": "SIREN" }
         return dict(zip(df.iloc[:, 0], df.iloc[:, 1].astype(str))), df
-        
     except Exception as e:
         st.error(f"Erreur de lecture du Google Sheet : {e}")
         return {}, pd.DataFrame(columns=["Nom du Bailleur", "SIREN"])
