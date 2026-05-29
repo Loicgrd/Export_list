@@ -74,7 +74,7 @@ with tab_reglages:
                             # 2. Ajouter à l'ancien tableau
                             df_updated = pd.concat([df_bailleurs_gsheet, nouvelle_ligne], ignore_index=True)
                             # 3. Écrire dans le Google Sheet !
-                            conn.update(spreadsheet=SPREADSHEET_URL, data=df_updated)
+                            conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Confort", data=df_updated)
                             
                             # 4. Vider le cache pour forcer la relecture
                             st.cache_data.clear()
