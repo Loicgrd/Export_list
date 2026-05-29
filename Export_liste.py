@@ -84,7 +84,33 @@ with tab_reglages:
             st.warning("Aucun bailleur trouvé pour ces SIREN.")
 
     st.divider()
-    st.subheader("📋 Liste actuelle")
+    
+    with col_list:
+        st.subheader("📋 Bailleurs enregistrés")
+        
+        # On vérifie qu'on a bien des données
+        if not df_bailleurs_gsheet.empty:
+            for index, row in df_bailleurs_gsheet.iterrows():
+                # On crée une ligne composée de 3 colonnes : Nom, SIREN, et bouton
+                c1, c2, c3 = st.columns([3, 2, 1])
+                
+                c1.write(f"🏢 {row.iloc[0]}") # Nom du bailleur
+                c2.write(f"🆔 {row.iloc[1]}") # SIREN
+                
+                # Le bouton "Poubelle"
+                if c3.button("❌", key=f"del_{index}"):
+                    # On supprime la ligne correspondante
+                    df_updated = df_bailleurs_gsheet.drop(index)
+                    
+                    # Mise à jour sur Google Sheet
+                    conn.update(spreadsheet=SPREADSHEET_URL, worksheet=0, data=df_updated)
+                    
+                    # Rafraîchissement
+                    st.cache_data.clear()
+                    st.rerun()
+        else:
+            st.info("Aucun bailleur enregistré.")
+            
     st.dataframe(df_bailleurs_gsheet, use_container_width=True)
 
 # ==========================================
