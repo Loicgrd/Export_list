@@ -13,7 +13,7 @@ st.set_page_config(page_title="Générateur d'Exports CEE", layout="wide")
 # CONNEXION AU GOOGLE SHEET
 # ==========================================
 # L'URL de ton fichier de base de données
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1pkj6frncXmzUUVAClAWp63HY_UpQUahOCLz19w-UseI/edit?usp=sharing"
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1pkj6frncXmzUUVAClAWp63HY_UpQUahOCLz19w-UseI/edit"
 
 # Initialisation de la connexion GSheets
 conn = st.connection("gsheets", type=GSheetsConnection)
