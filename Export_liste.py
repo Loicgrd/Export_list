@@ -98,4 +98,83 @@ with tab_reglages:
                                 st.success(f"{nom_excel} a été ajouté définitivement !")
                                 st.rerun()
                     else:
-                        st.warning("Aucun résultat trouvé pour cette recherche
+                        st.warning("Aucun résultat trouvé pour cette recherche.")
+                else:
+                    st.error("Erreur de communication avec l'API du gouvernement.")
+            except Exception as e:
+                st.error(f"Une erreur réseau est survenue : {e}")
+
+    with col_list:
+        st.subheader("📋 Bailleurs enregistrés")
+        st.dataframe(df_bailleurs_gsheet, use_container_width=True)
+
+# ------------------------------------------
+# ONGLET 2 : GÉNÉRATEUR D'EXCEL
+# ------------------------------------------
+with tab_generateur:
+    st.markdown("Chargez votre **Liste globale** pour générer les fichiers d'export et Confort.")
+    
+    uploaded_file = st.file_uploader("Importer le fichier Excel source (.xlsx)", type=["xlsx"])
+
+    if uploaded_file is not None:
+        try:
+            df_source = pd.read_excel(uploaded_file)
+            st.success(f"Fichier chargé avec succès ! ({len(df_source)} lignes trouvées)")
+
+            # Formatage des dates (suppression des heures)
+            colonnes_dates = ['Date réception', "Date d'engagement", 'Date prévisionnelle de réalisation', 'Date réelle de réalisation']
+            for col in colonnes_dates:
+                if col in df_source.columns:
+                    df_source[col] = pd.to_datetime(df_source[col], errors='coerce').dt.date
+
+            # --- TRAITEMENT CONFORT ---
+            bailleurs_cibles = list(dict_siren.keys())
+            df_confort = pd.DataFrame()
+            
+            if 'Bénéficiaire' in df_source.columns:
+                df_confort = df_source[df_source['Bénéficiaire'].isin(bailleurs_cibles)].copy()
+                if not df_confort.empty:
+                    df_confort.insert(0, 'SIREN', df_confort['Bénéficiaire'].map(dict_siren))
+                    df_confort.insert(1, 'BS Confort', df_confort['Bénéficiaire'])
+                    
+                    cols_attendues = ['SIREN', 'BS Confort', 'Date réception', 'Numéro dossier', 'Bénéficiaire', 'Stade']
+                    colonnes_dispos = [c for c in cols_attendues if c in df_confort.columns]
+                    df_confort = df_confort[colonnes_dispos]
+
+            # --- TRAITEMENT EXPORT ---
+            df_export = df_source.copy()
+            if 'Contrôle' in df_export.columns:
+                df_export = df_export[df_export['Contrôle'] != 'Non concerné']
+            
+            # Exclusion stricte des dossiers partis dans Confort
+            if not df_confort.empty and 'Numéro dossier' in df_export.columns:
+                dossiers_confort = df_confort['Numéro dossier'].dropna().unique()
+                df_export = df_export[~df_export['Numéro dossier'].isin(dossiers_confort)]
+
+            # --- TÉLÉCHARGEMENTS ---
+            st.divider()
+            c1, c2 = st.columns(2)
+            
+            with c1:
+                st.subheader("📊 Liste à exporter")
+                st.text(f"{len(df_export)} lignes (Excluant les dossiers Confort).")
+                st.dataframe(df_export.head(3))
+                
+                buffer_export = io.BytesIO()
+                with pd.ExcelWriter(buffer_export, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as w:
+                    df_export.to_excel(w, index=False, sheet_name='Liste à exporter')
+                st.download_button("📥 Télécharger la Liste à exporter", buffer_export.getvalue(), "Liste_a_exporter.xlsx", use_container_width=True)
+                
+            with c2:
+                st.subheader("🏢 Fichier Confort")
+                st.text(f"{len(df_confort)} lignes identifiées.")
+                st.dataframe(df_confort.head(3) if not df_confort.empty else df_confort)
+                
+                if not df_confort.empty:
+                    buffer_confort = io.BytesIO()
+                    with pd.ExcelWriter(buffer_confort, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as w:
+                        df_confort.to_excel(w, index=False, sheet_name='Confort')
+                    st.download_button("📥 Télécharger le fichier Confort", buffer_confort.getvalue(), "Fichier_Confort.xlsx", use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Erreur lors du traitement du fichier : {e}")
