@@ -84,7 +84,40 @@ with tab_reglages:
             st.warning("Aucun bailleur trouvé pour ces SIREN.")
 
     st.divider()
+
+# --- SECTION LISTE ACTUELLE (Mode Tableau avec Poubelle intégrée) ---
     st.subheader("📋 Liste actuelle")
+    
+    # En-têtes du tableau manuel
+    c_nom, c_siren, c_action = st.columns([3, 2, 1])
+    c_nom.markdown("**🏢 Nom du Bailleur**")
+    c_siren.markdown("**🆔 SIREN**")
+    c_action.markdown("**🗑️**")
+    
+    st.divider()
+
+    # On affiche chaque bailleur
+    if not df_bailleurs_gsheet.empty:
+        for index, row in df_bailleurs_gsheet.iterrows():
+            c1, c2, c3 = st.columns([3, 2, 1])
+            
+            c1.write(f"{row.iloc[0]}") # Nom
+            c2.write(f"{row.iloc[1]}") # SIREN
+            
+            # Le bouton "Poubelle"
+            if c3.button("❌", key=f"del_{index}"):
+                df_updated = df_bailleurs_gsheet.drop(index)
+                
+                # Mise à jour Google Sheet (assure-toi d'avoir worksheet=0 si tu cibles le 1er onglet)
+                conn.update(spreadsheet=SPREADSHEET_URL, worksheet=0, data=df_updated)
+                
+                # Rafraîchissement
+                st.cache_data.clear()
+                st.rerun()
+    else:
+        st.info("Aucun bailleur enregistré.")
+
+    
     st.dataframe(df_bailleurs_gsheet, use_container_width=True)
 
 # ==========================================
