@@ -38,22 +38,7 @@ tab_generateur, tab_reglages = st.tabs(["📊 Générateur d'Exports", "⚙️ B
 # ==========================================
 # ONGLET 2 : GESTION DANS GOOGLE SHEETS (AMÉLIORÉ)
 # ==========================================
-with tab_reglages:
-    st.header("Base de données 'Confort'")
-    
-    # --- SECTION SUPPRESSION ---
-    st.subheader("🗑️ Supprimer des bailleurs")
-    if not df_bailleurs_gsheet.empty:
-        # On utilise une multiselect pour choisir les bailleurs à supprimer
-        bailleurs_a_supprimer = st.multiselect("Sélectionner les bailleurs à supprimer :", options=df_bailleurs_gsheet.iloc[:, 0].tolist())
-        
-        if st.button("Supprimer la sélection", type="primary"):
-            df_updated = df_bailleurs_gsheet[~df_bailleurs_gsheet.iloc[:, 0].isin(bailleurs_a_supprimer)]
-            conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Confort", data=df_updated)
-            st.cache_data.clear()
-            st.rerun()
 
-    st.divider()
 
     # --- SECTION MULTI-AJOUT ---
     st.subheader("➕ Ajouter plusieurs bailleurs (par SIREN)")
@@ -84,6 +69,26 @@ with tab_reglages:
             st.warning("Aucun bailleur trouvé pour ces SIREN.")
 
     st.divider()
+
+
+with tab_reglages:
+    st.header("Base de données 'Confort'")
+    
+    # --- SECTION SUPPRESSION ---
+    st.subheader("🗑️ Supprimer des bailleurs")
+    if not df_bailleurs_gsheet.empty:
+        # On utilise une multiselect pour choisir les bailleurs à supprimer
+        bailleurs_a_supprimer = st.multiselect("Sélectionner les bailleurs à supprimer :", options=df_bailleurs_gsheet.iloc[:, 0].tolist())
+        
+        if st.button("Supprimer la sélection", type="primary"):
+            df_updated = df_bailleurs_gsheet[~df_bailleurs_gsheet.iloc[:, 0].isin(bailleurs_a_supprimer)]
+            conn.update(spreadsheet=SPREADSHEET_URL, worksheet="Confort", data=df_updated)
+            st.cache_data.clear()
+            st.rerun()
+
+    st.divider()
+
+
     st.subheader("📋 Liste actuelle")
     st.dataframe(df_bailleurs_gsheet, use_container_width=True)
 
