@@ -4,23 +4,22 @@ import io
 import requests
 from streamlit_gsheets import GSheetsConnection
 
-# ==========================================
-# CONFIGURATION DE LA PAGE
-# ==========================================
+# Configuration
 st.set_page_config(page_title="Générateur d'Exports CEE", layout="wide")
 
-# URL corrigée (sans le ?usp=sharing)
+# URL corrigée (sans ?usp=sharing)
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1pkj6frncXmzUUVAClAWp63HY_UpQUahOCLz19w-UseI/edit"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Fonction de lecture sécurisée
 def load_bailleurs():
     try:
-        # worksheet=0 cible le premier onglet, ttl=0 force la relecture directe
+        # worksheet=0 cible le premier onglet, ttl=0 pour forcer la lecture fraîche
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=0, ttl=0)
         if df.empty or len(df.columns) < 2:
             return {}, pd.DataFrame(columns=["Nom du Bailleur", "SIREN"])
         df = df.dropna(subset=[df.columns[0]])
+        # Retourne le dictionnaire et le dataframe nettoyé
         return dict(zip(df.iloc[:, 0], df.iloc[:, 1].astype(str))), df
     except Exception as e:
         st.error(f"Erreur de lecture Google Sheet : {e}")
@@ -29,12 +28,12 @@ def load_bailleurs():
 dict_siren, df_bailleurs_gsheet = load_bailleurs()
 
 # ==========================================
-# INTERFACE UTILISATEUR
+# INTERFACE
 # ==========================================
 st.title("Générateur d'Exports CEE")
 tab_generateur, tab_reglages = st.tabs(["📊 Générateur d'Exports", "⚙️ Gestion des Bailleurs"])
 
-# --- ONGLET 1 : RÉGLAGES ---
+# --- ONGLET 1 : RÉGLAGES (Avec affichage "Poubelle" par ligne) ---
 with tab_reglages:
     st.subheader("📋 Bailleurs enregistrés")
     if not df_bailleurs_gsheet.empty:
