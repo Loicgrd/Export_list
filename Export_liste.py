@@ -16,16 +16,16 @@ SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1pkj6frncXmzUUVAClAWp6
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # Fonction pour lire les données (avec mise en cache pour ne pas surcharger Google)
-@st.cache_data(ttl=10) # Le cache se rafraîchit toutes les 10 secondes
+
+@st.cache_data(ttl=10)
 def load_bailleurs():
     try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, usecols=[0, 1])
-        # On nettoie les lignes vides
+        # Ajout de worksheet="Confort" ici
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Confort", usecols=[0, 1])
         df = df.dropna(subset=[df.columns[0]])
-        # On convertit en dictionnaire { "NOM": "SIREN" }
         return dict(zip(df.iloc[:, 0], df.iloc[:, 1].astype(str))), df
     except Exception as e:
-        st.error(f"Erreur de lecture du Google Sheet : {e}")
+        st.error(f"Erreur de lecture : {e}")
         return {}, pd.DataFrame()
 
 # Chargement de la base de données GSheet
