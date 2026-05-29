@@ -2,3 +2,5 @@ pandas
 streamlit
 openpyxl
 xlsxwriter
+requests
+st-gsheets-connection
