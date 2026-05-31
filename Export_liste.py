@@ -271,7 +271,7 @@ with tab_generateur:
                         margins_name='Total'
                     )
                     
-                    # MODIFICATION : ascending=True pour avoir les dates récentes en bas
+                    # ascending=True pour avoir les dates récentes en bas
                     tableau_dates = tableau.drop('Total').sort_index(ascending=True)
                     tableau_final = pd.concat([tableau_dates, tableau.loc[['Total']]])
                     
@@ -283,22 +283,22 @@ with tab_generateur:
                             index_formate.append(idx.strftime('%d/%m/%Y'))
                     tableau_final.index = index_formate
 
+                    # --- NOUVELLE LOGIQUE : Récupérer exactement les 5 dates les plus récentes ---
+                    dates_sans_total = [d for d in tableau_final.index if d != 'Total']
+                    top_5_dates = dates_sans_total[-5:] # On prend les 5 derniers éléments (les plus récents)
+
                     def coloriser_delais(row):
                         styles = []
                         for col_name in row.index:
                             if row.name == 'Total' or col_name == 'Total':
                                 styles.append('background-color: #e6e6e6; font-weight: bold; color: black')
                             else:
-                                try:
-                                    date_ligne = datetime.strptime(str(row.name), '%d/%m/%Y').date()
-                                    jours_ecoules = (datetime.today().date() - date_ligne).days
-                                    
-                                    if jours_ecoules <= 5:
-                                        styles.append('background-color: #d4edda; color: #155724')
-                                    else:
-                                        styles.append('background-color: #f8d7da; color: #721c24')
-                                except:
-                                    styles.append('')
+                                # Si la date fait partie de nos 5 plus récentes -> Vert
+                                if row.name in top_5_dates:
+                                    styles.append('background-color: #d4edda; color: #155724')
+                                # Sinon -> Rouge
+                                else:
+                                    styles.append('background-color: #f8d7da; color: #721c24')
                         return styles
 
                     st.dataframe(tableau_final.style.apply(coloriser_delais, axis=1), use_container_width=True)
