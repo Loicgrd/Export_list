@@ -151,8 +151,46 @@ with tab_admin:
             st.dataframe(pd.DataFrame(mots_coms_admin, columns=["Mots-clés (Commentaires)"]), hide_index=True, use_container_width=True)
 
 # ==========================================
-# GÉNÉRATEURS EXCEL (Formules croisées optimisées)
+# GÉNÉRATEURS EXCEL ET TABLEAUX
 # ==========================================
+def afficher_tableau_synthese(df, titre):
+    if not df.empty and 'Date réception' in df.columns and 'DCR' in df.columns:
+        df_synth = df.dropna(subset=['Date réception']).copy()
+        if df_synth.empty:
+            st.info(f"Aucune donnée valide pour {titre}.")
+            return
+            
+        st.markdown(f"**{titre}**")
+        df_synth['Date réception'] = pd.to_datetime(df_synth['Date réception']).dt.date
+        df_synth['DCR'] = df_synth['DCR'].fillna('Non renseigné')
+        
+        tableau = pd.crosstab(index=df_synth['Date réception'], columns=df_synth['DCR'], margins=True, margins_name='Total')
+        tableau_dates = tableau.drop('Total').sort_index(ascending=True)
+        tableau_final = pd.concat([tableau_dates, tableau.loc[['Total']]])
+        
+        index_formate = []
+        for idx in tableau_final.index:
+            if isinstance(idx, str): index_formate.append(idx)
+            else: index_formate.append(idx.strftime('%d/%m/%Y'))
+        tableau_final.index = index_formate
+
+        dates_sans_total = [d for d in tableau_final.index if d != 'Total']
+        top_5_dates = dates_sans_total[-5:]
+
+        def coloriser_delais(row):
+            styles = []
+            for col_name in row.index:
+                if row.name == 'Total' or col_name == 'Total':
+                    styles.append('background-color: #e6e6e6; font-weight: bold; color: black')
+                else:
+                    if row.name in top_5_dates: styles.append('background-color: #d4edda; color: #155724')
+                    else: styles.append('background-color: #f8d7da; color: #721c24')
+            return styles
+
+        st.dataframe(tableau_final.style.apply(coloriser_delais, axis=1), use_container_width=True)
+    else:
+        st.info(f"**{titre}** : Base vide ou colonnes manquantes.")
+
 def generer_excel_formate(df, nom_feuille):
     if not df.empty and 'Initiales' not in df.columns:
         df.insert(0, 'Initiales', '')
@@ -212,7 +250,6 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
         
         total_lignes_excel = len(df_prio) + len(df_classique) + 20 
         
-        # --- 1. LISTE PRIORITAIRE ---
         if not df_prio.empty:
             worksheet.merge_range(current_row, 0, current_row, max_col - 1, "↓ /!\\ Liste prioritaire (à faire avant de passer sur une DCR) /!\\ ↓", fmt_rouge)
             current_row += 1
@@ -232,7 +269,6 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
             worksheet.merge_range(current_row, 0, current_row, max_col - 1, "↑ /!\\ Liste prioritaire (à faire avant de passer sur une DCR) /!\\ ↑", fmt_rouge)
             current_row += 1
             
-        # --- 2. LISTE CLASSIQUE ---
         if not df_classique.empty or df_prio.empty:
             worksheet.merge_range(current_row, 0, current_row, max_col - 1, "Puis basculer sur DCR (pensez à vérifier votre planning).", fmt_bleu)
             current_row += 1
@@ -268,7 +304,6 @@ with tab_generateur:
             df_source = pd.read_excel(uploaded_file)
             st.success(f"Fichier chargé ! ({len(df_source)} lignes)")
 
-            # CORRECTION ICI : on ne convertit en date que si la colonne contient "date" (et non plus "période")
             for col in df_source.columns:
                 if 'date' in str(col).lower():
                     df_source[col] = pd.to_datetime(df_source[col], errors='coerce')
@@ -276,39 +311,10 @@ with tab_generateur:
             # --- ANALYSE ET DÉFINITION DE LA PRIORITÉ ---
             st.subheader("📅 Analyse et définition de la priorité (DCR)")
             
-            if st.toggle("📊 Afficher le tableau de synthèse"):
-                if 'Date réception' in df_source.columns and 'DCR' in df_source.columns:
-                    df_synth = df_source.dropna(subset=['Date réception']).copy()
-                    df_synth['Date réception'] = pd.to_datetime(df_synth['Date réception']).dt.date
-                    df_synth['DCR'] = df_synth['DCR'].fillna('Non renseigné')
-                    
-                    tableau = pd.crosstab(index=df_synth['Date réception'], columns=df_synth['DCR'], margins=True, margins_name='Total')
-                    tableau_dates = tableau.drop('Total').sort_index(ascending=True)
-                    tableau_final = pd.concat([tableau_dates, tableau.loc[['Total']]])
-                    
-                    index_formate = []
-                    for idx in tableau_final.index:
-                        if isinstance(idx, str): index_formate.append(idx)
-                        else: index_formate.append(idx.strftime('%d/%m/%Y'))
-                    tableau_final.index = index_formate
+            # --- TABLEAU GLOBAL (De retour en haut !) ---
+            if st.toggle("📊 Afficher le tableau de synthèse global (Avant filtres)"):
+                afficher_tableau_synthese(df_source, "Synthèse Globale de l'import")
 
-                    dates_sans_total = [d for d in tableau_final.index if d != 'Total']
-                    top_5_dates = dates_sans_total[-5:]
-
-                    def coloriser_delais(row):
-                        styles = []
-                        for col_name in row.index:
-                            if row.name == 'Total' or col_name == 'Total':
-                                styles.append('background-color: #e6e6e6; font-weight: bold; color: black')
-                            else:
-                                if row.name in top_5_dates: styles.append('background-color: #d4edda; color: #155724')
-                                else: styles.append('background-color: #f8d7da; color: #721c24')
-                        return styles
-
-                    st.dataframe(tableau_final.style.apply(coloriser_delais, axis=1), use_container_width=True)
-                else:
-                    st.warning("⚠️ Les colonnes 'Date réception' ou 'DCR' sont manquantes pour générer le tableau.")
-            
             date_prio = st.date_input("Dossiers reçus JUSQU'À cette date (incluse) = Prioritaires :", value=None, format="DD/MM/YYYY")
 
             # --- CONFORT & CDC ---
@@ -383,10 +389,7 @@ with tab_generateur:
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                 for n, d in fichiers_a_zipper.items(): zf.writestr(n, d)
             
-            # --- AFFICHAGE BOUTONS ---
-            st.download_button("📦 TÉLÉCHARGER TOUS LES EXPORTS (.zip)", zip_buffer.getvalue(), f"ODICEE-{date_export}-TOUS_LES_EXPORTS.zip", use_container_width=True, type="primary")
-            st.markdown("<p style='text-align: center; color: gray;'>Ou télécharger individuellement :</p>", unsafe_allow_html=True)
-            
+            # --- AFFICHAGE BOUTONS ET SYNTHÈSES ---
             c1, c2, c3, c4 = st.columns(4)
             with c1:
                 st.subheader("📊 DCR")
@@ -404,6 +407,21 @@ with tab_generateur:
                 st.subheader("🛡️ ADMIN")
                 st.text(f"{len(df_admin)} lignes.")
                 if not df_admin.empty: st.download_button("📥 Télécharger", fichiers_a_zipper.get(nom_admin, b''), nom_admin, use_container_width=True)
+                
+            st.download_button("📦 TÉLÉCHARGER TOUS LES EXPORTS (.zip)", zip_buffer.getvalue(), f"ODICEE-{date_export}-TOUS_LES_EXPORTS.zip", use_container_width=True, type="primary")
+
+            st.divider()
+            
+            # Affichage dynamique des tableaux de synthèse pour chaque groupe (en bas)
+            if st.toggle("📊 Afficher les tableaux de synthèse par export"):
+                t1, t2 = st.columns(2)
+                with t1:
+                    df_dcr_complet = pd.concat([df_prio, df_classique]) if not df_prio.empty or not df_classique.empty else pd.DataFrame()
+                    afficher_tableau_synthese(df_dcr_complet, "📈 Synthèse DCR")
+                    afficher_tableau_synthese(df_cdc, "🏛️ Synthèse CDC")
+                with t2:
+                    afficher_tableau_synthese(df_confort, "🏢 Synthèse CONFORT")
+                    afficher_tableau_synthese(df_admin, "🛡️ Synthèse ADMIN")
 
         except Exception as e:
             st.error(f"Erreur lors de la génération de l'Excel : {e}")
