@@ -13,17 +13,12 @@ st.set_page_config(page_title="Générateur d'Exports CEE", layout="wide")
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1pkj6frncXmzUUVAClAWp63HY_UpQUahOCLz19w-UseI/edit?usp=sharing"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Fonction modifiée pour charger une feuille spécifique (Confort ou CDC)
 @st.cache_data(ttl=10)
 def load_worksheet(sheet_name):
     try:
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name)
-        
-        # Si la feuille est totalement vide, on crée les colonnes par défaut
         if df.empty or len(df.columns) < 3:
             df = pd.DataFrame(columns=["Nom", "SIREN", "Date d'ajout"])
-            
-        # Si la colonne Date d'ajout manque mais que les autres y sont
         if len(df.columns) < 3:
             df["Date d'ajout"] = ""
             
@@ -36,27 +31,42 @@ def load_worksheet(sheet_name):
         st.error(f"Erreur de lecture de la feuille '{sheet_name}' : {e}")
         return {}, pd.DataFrame(columns=["Nom", "SIREN", "Date d'ajout"])
 
-# Chargement des deux bases de données
+# --- NOUVEAU : CHARGEMENT DE LA BASE ADMIN ---
+@st.cache_data(ttl=10)
+def load_admin():
+    try:
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="ADMIN")
+        if df.empty:
+            return [], []
+            
+        # Nettoyage et récupération des listes de mots-clés
+        mots_docs = [str(x).strip() for x in df.get("Nom du document", pd.Series()).dropna() if str(x).strip() and str(x).strip().lower() != 'nan']
+        mots_coms = [str(x).strip() for x in df.get("Commentaire", pd.Series()).dropna() if str(x).strip() and str(x).strip().lower() != 'nan']
+        
+        return mots_docs, mots_coms
+    except Exception as e:
+        st.error(f"Erreur de lecture de la feuille 'ADMIN' : {e}")
+        return [], []
+
 dict_confort, df_confort_gsheet = load_worksheet("Confort")
 dict_cdc, df_cdc_gsheet = load_worksheet("CDC")
+mots_docs_admin, mots_coms_admin = load_admin()
 
 st.title("Générateur d'Exports CEE")
 
-# Ajout du troisième onglet
-tab_generateur, tab_confort, tab_cdc = st.tabs([
-    "📊 Générateur d'Exports", 
+# --- AJOUT DU 4ÈME ONGLET ---
+tab_generateur, tab_confort, tab_cdc, tab_admin = st.tabs([
+    "📊 Générateur", 
     "⚙️ Base Confort", 
-    "⚙️ Base CDC"
+    "⚙️ Base CDC",
+    "🛡️ Filtres ADMIN"
 ])
 
-
 # ==========================================
-# FONCTION COMMUNE DE GESTION (POUR CONFORT ET CDC)
+# FONCTION COMMUNE (CONFORT / CDC)
 # ==========================================
 def afficher_gestion_base(sheet_name, df_gsheet):
     st.header(f"Base de données '{sheet_name}'")
-
-    # Clés dynamiques pour que Confort et CDC ne se mélangent pas
     state_recherche = f"recherche_{sheet_name}"
     state_trouves = f"trouves_{sheet_name}"
 
@@ -64,122 +74,134 @@ def afficher_gestion_base(sheet_name, df_gsheet):
         st.session_state[state_recherche] = False
         st.session_state[state_trouves] = []
 
-    # --- SECTION MULTI-AJOUT ---
     st.subheader("➕ Ajouter plusieurs bailleurs (par SIREN)")
     liste_sirens_brut = st.text_area(f"Collez vos SIREN ici :", key=f"input_siren_{sheet_name}")
     
-    # ÉTAPE 1 : LA RECHERCHE
     if st.button("🔍 Rechercher les SIREN", key=f"btn_search_{sheet_name}"):
         sirens = [s.strip() for s in liste_sirens_brut.replace('\n', ',').split(',') if s.strip()]
-        
         trouves = []
-        with st.spinner("Recherche dans la base du Gouvernement..."):
+        with st.spinner("Recherche..."):
             for s in sirens:
                 resp = requests.get(f"https://recherche-entreprises.api.gouv.fr/search?q={s}")
                 if resp.status_code == 200 and resp.json().get("results"):
                     res = resp.json()["results"][0]
-                    trouves.append({
-                        "Nom": res.get('sigle') or res.get('nom_raison_sociale'),
-                        "SIREN": res.get('siren')
-                    })
-        
+                    trouves.append({"Nom": res.get('sigle') or res.get('nom_raison_sociale'), "SIREN": res.get('siren')})
         st.session_state[state_trouves] = trouves
         st.session_state[state_recherche] = True
 
-    # ÉTAPE 2 : LA CONFIRMATION
     if st.session_state[state_recherche]:
         if st.session_state[state_trouves]:
-            st.success(f"✅ {len(st.session_state[state_trouves])} bailleur(s) trouvé(s) ! Veuillez vérifier avant d'ajouter :")
+            st.success(f"✅ {len(st.session_state[state_trouves])} trouvés !")
             st.dataframe(pd.DataFrame(st.session_state[state_trouves]), hide_index=True)
-            
-            col_btn1, col_btn2 = st.columns([0.2, 0.8])
-            with col_btn1:
+            col1, col2 = st.columns([0.2, 0.8])
+            with col1:
                 if st.button("✅ Confirmer l'ajout", key=f"btn_conf_{sheet_name}", type="primary"):
                     date_jour = datetime.now().strftime("%d/%m/%Y")
                     nom_col, siren_col, date_col = df_gsheet.columns[0], df_gsheet.columns[1], df_gsheet.columns[2]
-                    
-                    nouveaux_bailleurs = [{nom_col: b['Nom'], siren_col: b['SIREN'], date_col: date_jour} for b in st.session_state[state_trouves]]
-                    df_updated = pd.concat([df_gsheet, pd.DataFrame(nouveaux_bailleurs)], ignore_index=True)
-                    
+                    nouveaux = [{nom_col: b['Nom'], siren_col: b['SIREN'], date_col: date_jour} for b in st.session_state[state_trouves]]
+                    df_updated = pd.concat([df_gsheet, pd.DataFrame(nouveaux)], ignore_index=True)
                     conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_updated)
-                    
                     st.session_state[state_recherche] = False
                     st.cache_data.clear()
                     st.rerun()
-                    
-            with col_btn2:
+            with col2:
                 if st.button("❌ Annuler", key=f"btn_annul_{sheet_name}"):
                     st.session_state[state_recherche] = False
                     st.rerun()
         else:
-            st.warning("❌ Aucun bailleur trouvé pour ces SIREN.")
+            st.warning("❌ Aucun trouvé.")
             if st.button("Nouvelle recherche", key=f"btn_nouv_{sheet_name}"):
                 st.session_state[state_recherche] = False
                 st.rerun()
 
     st.divider()
-
-    # --- LISTE ACTUELLE ---
     st.subheader("📋 Liste actuelle")
     if not df_gsheet.empty:
-        df_display = df_gsheet.copy()
-        col_nom, col_siren, col_date = df_display.columns[0], df_display.columns[1], df_display.columns[2]
-        df_display = df_display[[col_date, col_nom, col_siren]]
+        df_display = df_gsheet[[df_gsheet.columns[2], df_gsheet.columns[0], df_gsheet.columns[1]]]
         st.dataframe(df_display, use_container_width=True, hide_index=True)
     else:
-        st.info("La liste est actuellement vide.")
+        st.info("La liste est vide.")
 
-    # --- SECTION SUPPRESSION ---
-    st.subheader("🗑️ Supprimer des bailleurs")
+    st.subheader("🗑️ Supprimer")
     if not df_gsheet.empty:
-        bailleurs_a_supprimer = st.multiselect("Sélectionner les bailleurs à supprimer :", options=df_gsheet.iloc[:, 0].tolist(), key=f"del_{sheet_name}")
-        if st.button("Supprimer la sélection", type="primary", key=f"btn_del_{sheet_name}"):
-            df_updated = df_gsheet[~df_gsheet.iloc[:, 0].isin(bailleurs_a_supprimer)]
+        a_supprimer = st.multiselect("Sélectionner :", options=df_gsheet.iloc[:, 0].tolist(), key=f"del_{sheet_name}")
+        if st.button("Supprimer", type="primary", key=f"btn_del_{sheet_name}"):
+            df_updated = df_gsheet[~df_gsheet.iloc[:, 0].isin(a_supprimer)]
             conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_updated)
             st.cache_data.clear()
             st.rerun()
 
-
-# ==========================================
-# AFFICHAGE DES ONGLETS DE RÉGLAGES
-# ==========================================
 with tab_confort:
     afficher_gestion_base("Confort", df_confort_gsheet)
 
 with tab_cdc:
     afficher_gestion_base("CDC", df_cdc_gsheet)
 
+# ==========================================
+# NOUVEAU : GESTION DES FILTRES ADMIN
+# ==========================================
+def sauvegarder_admin(l_docs, l_coms):
+    max_len = max(len(l_docs), len(l_coms))
+    df_new = pd.DataFrame({
+        "Nom du document": l_docs + [""] * (max_len - len(l_docs)),
+        "Commentaire": l_coms + [""] * (max_len - len(l_coms))
+    })
+    conn.update(spreadsheet=SPREADSHEET_URL, worksheet="ADMIN", data=df_new)
+    st.cache_data.clear()
+    st.rerun()
+
+with tab_admin:
+    st.header("🛠️ Mots-clés pour le tri automatique ADMIN")
+    st.info("Tout dossier contenant l'un de ces mots-clés dans la colonne correspondante sera isolé dans l'export ADMIN.")
+    
+    col_d, col_c = st.columns(2)
+    
+    # --- Colonne NOM DU DOCUMENT ---
+    with col_d:
+        st.subheader("📄 Colonne 'Nom du document'")
+        nouveau_doc = st.text_input("Ajouter un mot-clé (ex: Visa) :")
+        if st.button("➕ Ajouter", key="add_doc") and nouveau_doc:
+            if nouveau_doc not in mots_docs_admin:
+                sauvegarder_admin(mots_docs_admin + [nouveau_doc], mots_coms_admin)
+                
+        if mots_docs_admin:
+            a_suppr_doc = st.multiselect("Supprimer :", mots_docs_admin, key="suppr_doc")
+            if st.button("🗑️ Enlever", key="btn_suppr_doc") and a_suppr_doc:
+                sauvegarder_admin([m for m in mots_docs_admin if m not in a_suppr_doc], mots_coms_admin)
+                
+            st.dataframe(pd.DataFrame(mots_docs_admin, columns=["Mots-clés (Documents)"]), hide_index=True, use_container_width=True)
+
+    # --- Colonne COMMENTAIRE ---
+    with col_c:
+        st.subheader("💬 Colonne 'Commentaire'")
+        nouveau_com = st.text_input("Ajouter un mot-clé (ex: Abandon) :")
+        if st.button("➕ Ajouter", key="add_com") and nouveau_com:
+            if nouveau_com not in mots_coms_admin:
+                sauvegarder_admin(mots_docs_admin, mots_coms_admin + [nouveau_com])
+                
+        if mots_coms_admin:
+            a_suppr_com = st.multiselect("Supprimer :", mots_coms_admin, key="suppr_com")
+            if st.button("🗑️ Enlever", key="btn_suppr_com") and a_suppr_com:
+                sauvegarder_admin(mots_docs_admin, [m for m in mots_coms_admin if m not in a_suppr_com])
+                
+            st.dataframe(pd.DataFrame(mots_coms_admin, columns=["Mots-clés (Commentaires)"]), hide_index=True, use_container_width=True)
 
 # ==========================================
-# FONCTION UTILITAIRE POUR GÉNÉRER L'EXCEL
+# GÉNÉRATEUR EXCEL
 # ==========================================
 def generer_excel_formate(df, nom_feuille):
     buffer = io.BytesIO()
-    # Le paramètre datetime_format garantit que les dates s'affichent en jj/mm/aaaa
     with pd.ExcelWriter(buffer, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
         df.to_excel(writer, index=False, sheet_name=nom_feuille)
         worksheet = writer.sheets[nom_feuille]
-        
-        # Récupérer les dimensions du tableau
         (max_row, max_col) = df.shape
-        
         if max_col > 0:
-            # 1. Ajouter le filtre automatique sur la première ligne
             worksheet.autofilter(0, 0, max_row, max_col - 1)
-            
-            # 2. Figer la première ligne (très pratique pour scroller)
             worksheet.freeze_panes(1, 0)
-            
-            # 3. Ajuster la largeur de toutes les colonnes pour que ce soit lisible
             for i in range(max_col):
                 worksheet.set_column(i, i, 16) 
-                
     return buffer.getvalue()
 
-
-# ==========================================
-# ONGLET 1 : GÉNÉRATEUR D'EXCEL
-# ==========================================
 with tab_generateur:
     uploaded_file = st.file_uploader("Importer le fichier Excel (Liste globale)", type=["xlsx"])
 
@@ -188,34 +210,26 @@ with tab_generateur:
             df_source = pd.read_excel(uploaded_file)
             st.success(f"Fichier chargé ! ({len(df_source)} lignes)")
 
-            # --- CORRECTION DES DATES ---
-            # On cherche toutes les colonnes contenant "date" ou "période" pour les forcer en vrai format Date
             for col in df_source.columns:
                 if 'date' in str(col).lower() or 'période' in str(col).lower():
-                    # On retire le '.dt.date' de l'ancien code pour laisser l'objet Date entier, 
-                    # c'est ce qui permet à xlsxwriter d'appliquer son format jj/mm/aaaa
                     df_source[col] = pd.to_datetime(df_source[col], errors='coerce')
 
-            # --- EXTRACTION CONFORT ---
             df_confort = pd.DataFrame()
             if 'Bénéficiaire' in df_source.columns:
                 df_confort = df_source[df_source['Bénéficiaire'].isin(dict_confort.keys())].copy()
                 if not df_confort.empty:
                     df_confort.insert(0, 'SIREN', df_confort['Bénéficiaire'].map(dict_confort))
 
-            # --- EXTRACTION CDC ---
             df_cdc = pd.DataFrame()
             if 'Bénéficiaire' in df_source.columns:
                 df_cdc = df_source[df_source['Bénéficiaire'].isin(dict_cdc.keys())].copy()
                 if not df_cdc.empty:
                     df_cdc.insert(0, 'SIREN', df_cdc['Bénéficiaire'].map(dict_cdc))
 
-            # --- LISTE À EXPORTER (Filtrée) ---
+            # --- LISTE À EXPORTER ---
             df_export = df_source.copy()
             
-            # (J'ai supprimé le filtre sur 'Non concerné' ici)
-            
-            # On retire uniquement les dossiers qui sont déjà dans Confort ou CDC
+            # 1. Retrait Confort & CDC
             if 'Numéro dossier' in df_export.columns:
                 if not df_confort.empty:
                     dossiers_confort = df_confort['Numéro dossier'].dropna().unique()
@@ -224,9 +238,26 @@ with tab_generateur:
                     dossiers_cdc = df_cdc['Numéro dossier'].dropna().unique()
                     df_export = df_export[~df_export['Numéro dossier'].isin(dossiers_cdc)]
 
-            # --- TÉLÉCHARGEMENTS EN 3 COLONNES ---
+            # 2. Retrait & Création de l'Export ADMIN
+            df_admin = pd.DataFrame()
+            mask_admin = pd.Series(False, index=df_export.index)
+            
+            if 'Nom du document' in df_export.columns and mots_docs_admin:
+                for mot in mots_docs_admin:
+                    mask_admin = mask_admin | df_export['Nom du document'].astype(str).str.contains(mot, case=False, na=False, regex=False)
+                    
+            if 'Commentaire' in df_export.columns and mots_coms_admin:
+                for mot in mots_coms_admin:
+                    mask_admin = mask_admin | df_export['Commentaire'].astype(str).str.contains(mot, case=False, na=False, regex=False)
+                    
+            if mask_admin.any():
+                df_admin = df_export[mask_admin].copy()
+                df_export = df_export[~mask_admin] # On les retire de la liste principale
+
+            # --- TÉLÉCHARGEMENTS ---
             st.divider()
-            c1, c2, c3 = st.columns(3)
+            # On passe à 4 colonnes pour gérer l'onglet ADMIN
+            c1, c2, c3, c4 = st.columns(4)
             
             with c1:
                 st.subheader("📊 Liste Principale")
@@ -240,8 +271,6 @@ with tab_generateur:
                 if not df_confort.empty:
                     excel_data = generer_excel_formate(df_confort, 'Confort')
                     st.download_button("📥 Télécharger Confort", excel_data, "Fichier_Confort.xlsx", use_container_width=True)
-                else:
-                    st.info("Aucun bailleur Confort trouvé.")
                     
             with c3:
                 st.subheader("🏛️ Fichier CDC")
@@ -249,8 +278,13 @@ with tab_generateur:
                 if not df_cdc.empty:
                     excel_data = generer_excel_formate(df_cdc, 'CDC')
                     st.download_button("📥 Télécharger CDC", excel_data, "Fichier_CDC.xlsx", use_container_width=True)
-                else:
-                    st.info("Aucun bailleur CDC trouvé.")
+                    
+            with c4:
+                st.subheader("🛡️ Fichier ADMIN")
+                st.text(f"{len(df_admin)} lignes.")
+                if not df_admin.empty:
+                    excel_data = generer_excel_formate(df_admin, 'ADMIN')
+                    st.download_button("📥 Télécharger ADMIN", excel_data, "Fichier_ADMIN.xlsx", use_container_width=True)
 
         except Exception as e:
             st.error(f"Erreur lors de la génération de l'Excel : {e}")
