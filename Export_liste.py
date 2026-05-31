@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import requests
+import zipfile  # <--- NOUVEAU : Ajoute ceci en haut !
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 
@@ -255,44 +256,79 @@ with tab_generateur:
                 df_export = df_export[~mask_admin] # On les retire de la liste principale
 
             # --- TÉLÉCHARGEMENTS ---
+            # --- PRÉPARATION DES FICHIERS ET DU ZIP ---
             st.divider()
-            
-            # 1. On génère la date du jour au format jj-mm-aaaa
             date_export = datetime.now().strftime("%d-%m-%Y")
             
-            # On prépare les 4 colonnes
+            # Dictionnaire pour stocker les fichiers générés
+            fichiers_a_zipper = {}
+
+            # 1. Préparation DCR
+            nom_fichier_dcr = f"ODICEE-{date_export}-DCR_export_doc_com_non_vus.xlsx"
+            excel_data_dcr = generer_excel_formate(df_export, 'Liste à exporter')
+            fichiers_a_zipper[nom_fichier_dcr] = excel_data_dcr
+            
+            # 2. Préparation Confort
+            if not df_confort.empty:
+                nom_fichier_confort = f"ODICEE-{date_export}-CONFORT_export_doc_com_non_vus.xlsx"
+                excel_data_confort = generer_excel_formate(df_confort, 'Confort')
+                fichiers_a_zipper[nom_fichier_confort] = excel_data_confort
+                
+            # 3. Préparation CDC
+            if not df_cdc.empty:
+                nom_fichier_cdc = f"ODICEE-{date_export}-CDC_export_doc_com_non_vus.xlsx"
+                excel_data_cdc = generer_excel_formate(df_cdc, 'CDC')
+                fichiers_a_zipper[nom_fichier_cdc] = excel_data_cdc
+                
+            # 4. Préparation ADMIN
+            if not df_admin.empty:
+                nom_fichier_admin = f"ODICEE-{date_export}-ADMIN_export_doc_com_non_vus.xlsx"
+                excel_data_admin = generer_excel_formate(df_admin, 'ADMIN')
+                fichiers_a_zipper[nom_fichier_admin] = excel_data_admin
+
+            # --- CRÉATION DE L'ARCHIVE ZIP ---
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                for nom_fichier, data in fichiers_a_zipper.items():
+                    zf.writestr(nom_fichier, data)
+            
+            # --- AFFICHAGE DES BOUTONS ---
+            # Le gros bouton pour tout télécharger d'un coup
+            st.download_button(
+                label="📦 TÉLÉCHARGER TOUS LES EXPORTS (.zip)",
+                data=zip_buffer.getvalue(),
+                file_name=f"ODICEE-{date_export}-TOUS_LES_EXPORTS.zip",
+                use_container_width=True,
+                type="primary" # Met le bouton en couleur pour qu'il ressorte
+            )
+            
+            st.markdown("<p style='text-align: center; color: gray;'>Ou télécharger individuellement :</p>", unsafe_allow_html=True)
+            
+            # Les boutons individuels
             c1, c2, c3, c4 = st.columns(4)
             
             with c1:
-                st.subheader("📊 Liste Principale (DCR)")
+                st.subheader("📊 DCR")
                 st.text(f"{len(df_export)} lignes.")
-                excel_data = generer_excel_formate(df_export, 'Liste à exporter')
-                nom_fichier_dcr = f"ODICEE-{date_export}-DCR_export_doc_com_non_vu.xlsx"
-                st.download_button("📥 Télécharger DCR", excel_data, nom_fichier_dcr, use_container_width=True)
+                st.download_button("📥 Télécharger DCR", excel_data_dcr, nom_fichier_dcr, use_container_width=True)
                 
             with c2:
-                st.subheader("🏢 Fichier Confort")
+                st.subheader("🏢 Confort")
                 st.text(f"{len(df_confort)} lignes.")
                 if not df_confort.empty:
-                    excel_data = generer_excel_formate(df_confort, 'Confort')
-                    nom_fichier_confort = f"ODICEE-{date_export}-CONFORT_export_doc_com_non_vu.xlsx"
-                    st.download_button("📥 Télécharger Confort", excel_data, nom_fichier_confort, use_container_width=True)
+                    st.download_button("📥 Télécharger Confort", excel_data_confort, nom_fichier_confort, use_container_width=True)
                     
             with c3:
-                st.subheader("🏛️ Fichier CDC")
+                st.subheader("🏛️ CDC")
                 st.text(f"{len(df_cdc)} lignes.")
                 if not df_cdc.empty:
-                    excel_data = generer_excel_formate(df_cdc, 'CDC')
-                    nom_fichier_cdc = f"ODICEE-{date_export}-CDC_export_doc_com_non_vu.xlsx"
-                    st.download_button("📥 Télécharger CDC", excel_data, nom_fichier_cdc, use_container_width=True)
+                    st.download_button("📥 Télécharger CDC", excel_data_cdc, nom_fichier_cdc, use_container_width=True)
                     
             with c4:
-                st.subheader("🛡️ Fichier ADMIN")
+                st.subheader("🛡️ ADMIN")
                 st.text(f"{len(df_admin)} lignes.")
                 if not df_admin.empty:
-                    excel_data = generer_excel_formate(df_admin, 'ADMIN')
-                    nom_fichier_admin = f"ODICEE-{date_export}-ADMIN_export_doc_com_non_vu.xlsx"
-                    st.download_button("📥 Télécharger ADMIN", excel_data, nom_fichier_admin, use_container_width=True)
+                    st.download_button("📥 Télécharger ADMIN", excel_data_admin, nom_fichier_admin, use_container_width=True)
 
         except Exception as e:
             st.error(f"Erreur lors de la génération de l'Excel : {e}")
