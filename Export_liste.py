@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import requests
 import zipfile
+import plotly.express as px
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 
@@ -53,13 +54,12 @@ mots_docs_admin, mots_coms_admin = load_admin()
 
 st.title("Générateur d'Exports CEE")
 
-# --- AJOUT DU 5ÈME ONGLET ---
-tab_generateur, tab_confort, tab_cdc, tab_admin, tab_prio = st.tabs([
+# --- ONGLETS (Passage de 5 à 4) ---
+tab_generateur, tab_confort, tab_cdc, tab_admin = st.tabs([
     "📊 Générateur", 
     "⚙️ Base Confort", 
     "⚙️ Base CDC",
-    "🛡️ Filtres ADMIN",
-    "⭐ Liste Prioritaire"
+    "🛡️ Filtres ADMIN"
 ])
 
 # ==========================================
@@ -173,23 +173,6 @@ with tab_admin:
 
 
 # ==========================================
-# NOUVEAU : GESTION DATE PRIORITAIRE
-# ==========================================
-with tab_prio:
-    st.header("⭐ Réglage de la Date Prioritaire pour l'export DCR")
-    st.info("Les dossiers dont la 'Date réception' est strictement antérieure à la date choisie seront encadrés en haut de la liste principale.")
-    
-    if "date_prio" not in st.session_state:
-        st.session_state.date_prio = None
-        
-    date_choisie = st.date_input("Sélectionner la date limite :", value=st.session_state.date_prio if st.session_state.date_prio else datetime.today())
-    
-    if st.button("💾 Appliquer cette date", type="primary"):
-        st.session_state.date_prio = date_choisie
-        st.success(f"Filtre activé : les dossiers reçus avant le {date_choisie.strftime('%d/%m/%Y')} seront classés comme prioritaires.")
-
-
-# ==========================================
 # GÉNÉRATEURS EXCEL (Standard et DCR)
 # ==========================================
 def generer_excel_formate(df, nom_feuille):
@@ -267,6 +250,22 @@ with tab_generateur:
                 if 'date' in str(col).lower() or 'période' in str(col).lower():
                     df_source[col] = pd.to_datetime(df_source[col], errors='coerce')
 
+            # --- ANALYSE ET DÉFINITION DE LA PRIORITÉ ---
+            st.subheader("📅 Analyse et définition de la priorité (DCR)")
+            
+            # Préparation des données pour le graphique
+            df_vol = df_source.dropna(subset=['Date réception']).copy()
+            df_vol['Date réception'] = df_vol['Date réception'].dt.date
+            vol_par_jour = df_vol.groupby('Date réception').size().reset_index(name='Nombre de dossiers')
+            
+            # Affichage du graphique interactif Plotly
+            fig = px.bar(vol_par_jour, x='Date réception', y='Nombre de dossiers', title="Volume de dossiers par Date de réception")
+            fig.update_layout(xaxis_title="Date de réception", yaxis_title="Nombre de dossiers", margin=dict(t=40, b=0, l=0, r=0))
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Sélecteur de date (s'applique directement au fichier DCR)
+            date_prio = st.date_input("Dossiers reçus strictement AVANT cette date = Prioritaires :", value=datetime.today().date())
+
             # --- CONFORT & CDC ---
             df_confort, df_cdc = pd.DataFrame(), pd.DataFrame()
             if 'Bénéficiaire' in df_source.columns:
@@ -276,7 +275,7 @@ with tab_generateur:
                 df_cdc = df_source[df_source['Bénéficiaire'].isin(dict_cdc.keys())].copy()
                 if not df_cdc.empty: df_cdc.insert(0, 'SIREN', df_cdc['Bénéficiaire'].map(dict_cdc))
 
-            # --- LISTE À EXPORTER ---
+            # --- LISTE À EXPORTER (Base) ---
             df_export = df_source.copy()
             if 'Numéro dossier' in df_export.columns:
                 if not df_confort.empty: df_export = df_export[~df_export['Numéro dossier'].isin(df_confort['Numéro dossier'])]
@@ -295,24 +294,21 @@ with tab_generateur:
                 df_admin = df_export[mask_admin].copy()
                 df_export = df_export[~mask_admin]
 
-            # --- PRIORITÉS (DCR Uniquement) ---
+            # --- SÉPARATION DCR (Prioritaire / Classique) ---
             df_prio, df_classique = pd.DataFrame(), df_export.copy()
             
-            # On sépare les dossiers si une date limite a été choisie
-            if 'Date réception' in df_export.columns and st.session_state.get("date_prio"):
-                date_limite = pd.to_datetime(st.session_state.date_prio).date()
+            if 'Date réception' in df_export.columns:
                 dates_reception = pd.to_datetime(df_export['Date réception']).dt.date
-                
-                mask_prio = dates_reception < date_limite
+                mask_prio = dates_reception < date_prio
                 df_prio = df_export[mask_prio].copy()
                 df_classique = df_export[~mask_prio].copy()
 
-            # --- CRÉATION FICHIERS ---
+            # --- CRÉATION FICHIERS ET ZIP ---
             st.divider()
             date_export = datetime.now().strftime("%d-%m-%Y")
             fichiers_a_zipper = {}
 
-            # DCR (avec la fonction spéciale)
+            # DCR
             nom_dcr = f"ODICEE-{date_export}-DCR_export_doc_com_non_vus.xlsx"
             excel_dcr = generer_excel_dcr(df_prio, df_classique, 'Liste à exporter')
             fichiers_a_zipper[nom_dcr] = excel_dcr
@@ -333,11 +329,12 @@ with tab_generateur:
                 excel_admin = generer_excel_formate(df_admin, 'ADMIN')
                 fichiers_a_zipper[nom_admin] = excel_admin
 
-            # --- ZIP & BOUTONS ---
+            # ZIP global
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                 for n, d in fichiers_a_zipper.items(): zf.writestr(n, d)
             
+            # --- AFFICHAGE BOUTONS DE TÉLÉCHARGEMENT ---
             st.download_button("📦 TÉLÉCHARGER TOUS LES EXPORTS (.zip)", zip_buffer.getvalue(), f"ODICEE-{date_export}-TOUS_LES_EXPORTS.zip", use_container_width=True, type="primary")
             st.markdown("<p style='text-align: center; color: gray;'>Ou télécharger individuellement :</p>", unsafe_allow_html=True)
             
@@ -361,7 +358,3 @@ with tab_generateur:
 
         except Exception as e:
             st.error(f"Erreur lors de la génération de l'Excel : {e}")
-
-
-
-
