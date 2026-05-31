@@ -3,6 +3,7 @@ import pandas as pd
 import io
 import requests
 import zipfile
+import plotly.express as px  
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 
@@ -172,22 +173,6 @@ with tab_admin:
             st.dataframe(pd.DataFrame(mots_coms_admin, columns=["Mots-clés (Commentaires)"]), hide_index=True, use_container_width=True)
 
 
-# ==========================================
-# NOUVEAU : GESTION DATE PRIORITAIRE
-# ==========================================
-with tab_prio:
-    st.header("⭐ Réglage de la Date Prioritaire pour l'export DCR")
-    st.info("Les dossiers dont la 'Date réception' est strictement antérieure à la date choisie seront encadrés en haut de la liste principale.")
-    
-    if "date_prio" not in st.session_state:
-        st.session_state.date_prio = None
-        
-    date_choisie = st.date_input("Sélectionner la date limite :", value=st.session_state.date_prio if st.session_state.date_prio else datetime.today())
-    
-    if st.button("💾 Appliquer cette date", type="primary"):
-        st.session_state.date_prio = date_choisie
-        st.success(f"Filtre activé : les dossiers reçus avant le {date_choisie.strftime('%d/%m/%Y')} seront classés comme prioritaires.")
-
 
 # ==========================================
 # GÉNÉRATEURS EXCEL (Standard et DCR)
@@ -260,12 +245,28 @@ with tab_generateur:
     if uploaded_file is not None:
         try:
             df_source = pd.read_excel(uploaded_file)
-            st.success(f"Fichier chargé ! ({len(df_source)} lignes)")
-
-            # Traitement des dates
+            
+            # Conversion des dates
             for col in df_source.columns:
                 if 'date' in str(col).lower() or 'période' in str(col).lower():
                     df_source[col] = pd.to_datetime(df_source[col], errors='coerce')
+
+            # --- PARTIE GRAPHIQUE ET FILTRE ---
+            st.subheader("📅 Analyse et définition de la priorité")
+            
+            # Calcul du nombre de dossiers par jour
+            df_vol = df_source.dropna(subset=['Date réception']).copy()
+            df_vol['Date réception'] = df_vol['Date réception'].dt.date
+            vol_par_jour = df_vol.groupby('Date réception').size().reset_index(name='Nombre de dossiers')
+            
+            # Graphique Plotly
+            fig = px.bar(vol_par_jour, x='Date réception', y='Nombre de dossiers', 
+                         title="Volume de dossiers par Date de réception")
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Sélecteur de date prioritaire
+            date_prio = st.date_input("Dossiers reçus AVANT cette date = Prioritaires :", 
+                                       value=datetime.today().date())
 
             # --- CONFORT & CDC ---
             df_confort, df_cdc = pd.DataFrame(), pd.DataFrame()
@@ -363,3 +364,9 @@ with tab_generateur:
             st.error(f"Erreur lors de la génération de l'Excel : {e}")
         except Exception as e:
             st.error(f"Erreur lors de la génération de l'Excel : {e}")
+
+
+
+
+
+
