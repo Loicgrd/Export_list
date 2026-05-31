@@ -3,7 +3,6 @@ import pandas as pd
 import io
 import requests
 import zipfile
-import plotly.express as px
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 
@@ -244,23 +243,57 @@ with tab_generateur:
             # --- ANALYSE ET DÉFINITION DE LA PRIORITÉ ---
             st.subheader("📅 Analyse et définition de la priorité (DCR)")
             
-            # Le bouton "Analyse des données" sous forme de toggle pour garder l'état ouvert
-            if st.toggle("📈 Afficher l'analyse des données"):
-                df_vol = df_source.dropna(subset=['Date réception']).copy()
-                df_vol['Date réception'] = df_vol['Date réception'].dt.date
-                vol_par_jour = df_vol.groupby('Date réception').size().reset_index(name='Nombre de dossiers')
-                
-                # Graphique en ligne avec remplissage (style "Area chart" plus épuré)
-                fig = px.line(vol_par_jour, x='Date réception', y='Nombre de dossiers', 
-                              title="Volume de dossiers par Date de réception", markers=True)
-                # Ajout de la couleur sous la courbe pour le style
-                fig.update_traces(fill='tozeroy', mode='lines+markers')
-                fig.update_layout(xaxis_title="Date de réception", yaxis_title="Nombre de dossiers", 
-                                  margin=dict(t=40, b=0, l=0, r=0), template="plotly_white")
-                
-                st.plotly_chart(fig, use_container_width=True)
+            # --- NOUVEAU TABLEAU CROISÉ ---
+            if st.toggle("📊 Afficher le tableau de synthèse"):
+                if 'Date réception' in df_source.columns and 'DCR' in df_source.columns:
+                    # Préparation des données pour le tableau
+                    df_synth = df_source.dropna(subset=['Date réception']).copy()
+                    df_synth['Date réception'] = pd.to_datetime(df_synth['Date réception']).dt.date
+                    df_synth['DCR'] = df_synth['DCR'].fillna('Non renseigné')
+                    
+                    # Création du tableau croisé (crosstab gère les marges / totaux automatiquement)
+                    tableau = pd.crosstab(
+                        index=df_synth['Date réception'], 
+                        columns=df_synth['DCR'], 
+                        margins=True, 
+                        margins_name='Total'
+                    )
+                    
+                    # On isole le Total pour trier les dates de la plus récente à la plus ancienne
+                    tableau_dates = tableau.drop('Total').sort_index(ascending=False)
+                    tableau_final = pd.concat([tableau_dates, tableau.loc[['Total']]])
+                    
+                    # On convertit les dates en texte (jj/mm/aaaa) pour un bel affichage
+                    index_formate = []
+                    for idx in tableau_final.index:
+                        if isinstance(idx, str):
+                            index_formate.append(idx)
+                        else:
+                            index_formate.append(idx.strftime('%d/%m/%Y'))
+                    tableau_final.index = index_formate
+
+                    # Fonction pour appliquer les couleurs selon le délai (<= 5 jours)
+                    def coloriser_delais(row):
+                        if row.name == 'Total':
+                            return ['background-color: #f0f2f6; font-weight: bold; color: black'] * len(row)
+                        try:
+                            # Reconversion en date pour calculer l'écart avec aujourd'hui
+                            date_ligne = datetime.strptime(row.name, '%d/%m/%Y').date()
+                            jours_ecoules = (datetime.today().date() - date_ligne).days
+                            
+                            if jours_ecoules <= 5:
+                                return ['background-color: #d4edda; color: #155724'] * len(row) # Vert
+                            else:
+                                return ['background-color: #f8d7da; color: #721c24'] * len(row) # Rouge
+                        except:
+                            return [''] * len(row)
+
+                    # Affichage du tableau colorisé
+                    st.dataframe(tableau_final.style.apply(coloriser_delais, axis=1), use_container_width=True)
+                else:
+                    st.warning("⚠️ Les colonnes 'Date réception' ou 'DCR' sont manquantes pour générer le tableau.")
             
-            # Sélecteur de date toujours visible pour ne pas bloquer l'export si on ferme le graphique
+            # Sélecteur de date toujours visible
             date_prio = st.date_input("Dossiers reçus strictement AVANT cette date = Prioritaires :", value=datetime.today().date())
 
             # --- CONFORT & CDC ---
