@@ -54,7 +54,6 @@ mots_docs_admin, mots_coms_admin = load_admin()
 
 st.title("Générateur d'Exports CEE")
 
-# --- ONGLETS (Passage de 5 à 4) ---
 tab_generateur, tab_confort, tab_cdc, tab_admin = st.tabs([
     "📊 Générateur", 
     "⚙️ Base Confort", 
@@ -176,7 +175,6 @@ with tab_admin:
 # GÉNÉRATEURS EXCEL (Standard et DCR)
 # ==========================================
 def generer_excel_formate(df, nom_feuille):
-    """Générateur pour Confort, CDC et Admin"""
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
         df.to_excel(writer, index=False, sheet_name=nom_feuille)
@@ -190,24 +188,20 @@ def generer_excel_formate(df, nom_feuille):
     return buffer.getvalue()
 
 def generer_excel_dcr(df_prio, df_classique, nom_feuille):
-    """Générateur spécial pour la DCR avec encadrés Prioritaires et Classiques"""
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
         workbook = writer.book
         worksheet = workbook.add_worksheet(nom_feuille)
         
-        # Format des Bandeaux (Jaune, texte rouge, centré, bordures épaisses)
         format_titre = workbook.add_format({
             'bold': True, 'font_color': 'red', 'bg_color': 'yellow',
             'align': 'center', 'valign': 'vcenter', 'border': 5, 'font_size': 14
         })
-        # Format des en-têtes
         format_header = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
         
         current_row = 0
         max_col = len(df_classique.columns) if not df_classique.empty else (len(df_prio.columns) if not df_prio.empty else 1)
         
-        # 1. LISTE PRIORITAIRE
         if not df_prio.empty:
             worksheet.merge_range(current_row, 0, current_row, max_col - 1, "Liste Prioritaire", format_titre)
             current_row += 1
@@ -217,7 +211,6 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
             df_prio.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
             current_row += len(df_prio)
             
-        # 2. LISTE CLASSIQUE
         if not df_classique.empty or df_prio.empty:
             worksheet.merge_range(current_row, 0, current_row, max_col - 1, "Liste Classique", format_titre)
             current_row += 1
@@ -227,7 +220,6 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
             if not df_classique.empty:
                 df_classique.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
                 
-        # Ajustement de la largeur des colonnes
         for i in range(max_col):
             worksheet.set_column(i, i, 16)
             
@@ -245,7 +237,6 @@ with tab_generateur:
             df_source = pd.read_excel(uploaded_file)
             st.success(f"Fichier chargé ! ({len(df_source)} lignes)")
 
-            # Traitement des dates
             for col in df_source.columns:
                 if 'date' in str(col).lower() or 'période' in str(col).lower():
                     df_source[col] = pd.to_datetime(df_source[col], errors='coerce')
@@ -253,17 +244,23 @@ with tab_generateur:
             # --- ANALYSE ET DÉFINITION DE LA PRIORITÉ ---
             st.subheader("📅 Analyse et définition de la priorité (DCR)")
             
-            # Préparation des données pour le graphique
-            df_vol = df_source.dropna(subset=['Date réception']).copy()
-            df_vol['Date réception'] = df_vol['Date réception'].dt.date
-            vol_par_jour = df_vol.groupby('Date réception').size().reset_index(name='Nombre de dossiers')
+            # Le bouton "Analyse des données" sous forme de toggle pour garder l'état ouvert
+            if st.toggle("📈 Afficher l'analyse des données"):
+                df_vol = df_source.dropna(subset=['Date réception']).copy()
+                df_vol['Date réception'] = df_vol['Date réception'].dt.date
+                vol_par_jour = df_vol.groupby('Date réception').size().reset_index(name='Nombre de dossiers')
+                
+                # Graphique en ligne avec remplissage (style "Area chart" plus épuré)
+                fig = px.line(vol_par_jour, x='Date réception', y='Nombre de dossiers', 
+                              title="Volume de dossiers par Date de réception", markers=True)
+                # Ajout de la couleur sous la courbe pour le style
+                fig.update_traces(fill='tozeroy', mode='lines+markers')
+                fig.update_layout(xaxis_title="Date de réception", yaxis_title="Nombre de dossiers", 
+                                  margin=dict(t=40, b=0, l=0, r=0), template="plotly_white")
+                
+                st.plotly_chart(fig, use_container_width=True)
             
-            # Affichage du graphique interactif Plotly
-            fig = px.bar(vol_par_jour, x='Date réception', y='Nombre de dossiers', title="Volume de dossiers par Date de réception")
-            fig.update_layout(xaxis_title="Date de réception", yaxis_title="Nombre de dossiers", margin=dict(t=40, b=0, l=0, r=0))
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Sélecteur de date (s'applique directement au fichier DCR)
+            # Sélecteur de date toujours visible pour ne pas bloquer l'export si on ferme le graphique
             date_prio = st.date_input("Dossiers reçus strictement AVANT cette date = Prioritaires :", value=datetime.today().date())
 
             # --- CONFORT & CDC ---
