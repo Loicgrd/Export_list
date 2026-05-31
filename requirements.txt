@@ -5,3 +5,4 @@ xlsxwriter
 requests
 st-gsheets-connection
 plotly.express
+pytz
