@@ -4,10 +4,16 @@ import io
 import requests
 import zipfile
 from datetime import datetime
+import pytz
 from streamlit_gsheets import GSheetsConnection
 from xlsxwriter.utility import xl_col_to_name
 
 st.set_page_config(page_title="Générateur d'Exports CEE", layout="wide")
+
+# ==========================================
+# CONFIGURATION FUSEAU HORAIRE
+# ==========================================
+TZ_FRANCE = pytz.timezone('Europe/Paris')
 
 # ==========================================
 # CONNEXION AU GOOGLE SHEET
@@ -89,7 +95,8 @@ def afficher_gestion_base(sheet_name, df_gsheet):
             st.success(f"✅ {len(st.session_state[state_trouves])} trouvés !")
             st.dataframe(pd.DataFrame(st.session_state[state_trouves]), hide_index=True)
             if st.button("✅ Confirmer l'ajout", key=f"btn_conf_{sheet_name}", type="primary"):
-                date_jour = datetime.now().strftime("%d/%m/%Y")
+                # Application de l'heure française
+                date_jour = datetime.now(TZ_FRANCE).strftime("%d/%m/%Y")
                 nom_col, siren_col, date_col = df_gsheet.columns[0], df_gsheet.columns[1], df_gsheet.columns[2]
                 nouveaux = [{nom_col: b['Nom'], siren_col: b['SIREN'], date_col: date_jour} for b in st.session_state[state_trouves]]
                 df_updated = pd.concat([df_gsheet, pd.DataFrame(nouveaux)], ignore_index=True)
@@ -148,7 +155,6 @@ with tab_admin:
 # GÉNÉRATEURS EXCEL (Formules croisées optimisées)
 # ==========================================
 def generer_excel_formate(df, nom_feuille):
-    # Changement de nom de la colonne
     if not df.empty and 'Initiales' not in df.columns:
         df.insert(0, 'Initiales', '')
 
@@ -181,7 +187,6 @@ def generer_excel_formate(df, nom_feuille):
     return buffer.getvalue()
 
 def generer_excel_dcr(df_prio, df_classique, nom_feuille):
-    # Changement de nom de la colonne
     if not df_prio.empty and 'Initiales' not in df_prio.columns:
         df_prio.insert(0, 'Initiales', '')
     if not df_classique.empty and 'Initiales' not in df_classique.columns:
@@ -353,7 +358,8 @@ with tab_generateur:
 
             # --- CRÉATION FICHIERS ET ZIP ---
             st.divider()
-            date_export = datetime.now().strftime("%d-%m-%Y")
+            # Utilisation de l'heure française pour les noms de fichiers
+            date_export = datetime.now(TZ_FRANCE).strftime("%d-%m-%Y")
             fichiers_a_zipper = {}
 
             nom_dcr = f"ODICEE-{date_export}-DCR_export_doc_com_non_vus.xlsx"
