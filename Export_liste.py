@@ -272,29 +272,34 @@ with tab_generateur:
                             index_formate.append(idx.strftime('%d/%m/%Y'))
                     tableau_final.index = index_formate
 
-                    # Fonction pour appliquer les couleurs selon le délai (<= 5 jours)
+                    # Fonction pour appliquer les couleurs selon le délai (<= 5 jours) et griser les Totaux
                     def coloriser_delais(row):
-                        if row.name == 'Total':
-                            return ['background-color: #f0f2f6; font-weight: bold; color: black'] * len(row)
-                        try:
-                            # Reconversion en date pour calculer l'écart avec aujourd'hui
-                            date_ligne = datetime.strptime(row.name, '%d/%m/%Y').date()
-                            jours_ecoules = (datetime.today().date() - date_ligne).days
-                            
-                            if jours_ecoules <= 5:
-                                return ['background-color: #d4edda; color: #155724'] * len(row) # Vert
+                        styles = []
+                        for col_name in row.index:
+                            # 1. Si on est sur la LIGNE Total ou la COLONNE Total -> Gris
+                            if row.name == 'Total' or col_name == 'Total':
+                                styles.append('background-color: #e6e6e6; font-weight: bold; color: black')
                             else:
-                                return ['background-color: #f8d7da; color: #721c24'] * len(row) # Rouge
-                        except:
-                            return [''] * len(row)
+                                # 2. Sinon, on évalue la date
+                                try:
+                                    date_ligne = datetime.strptime(str(row.name), '%d/%m/%Y').date()
+                                    jours_ecoules = (datetime.today().date() - date_ligne).days
+                                    
+                                    if jours_ecoules <= 5:
+                                        styles.append('background-color: #d4edda; color: #155724') # Vert
+                                    else:
+                                        styles.append('background-color: #f8d7da; color: #721c24') # Rouge
+                                except:
+                                    styles.append('')
+                        return styles
 
                     # Affichage du tableau colorisé
                     st.dataframe(tableau_final.style.apply(coloriser_delais, axis=1), use_container_width=True)
                 else:
                     st.warning("⚠️ Les colonnes 'Date réception' ou 'DCR' sont manquantes pour générer le tableau.")
             
-            # Sélecteur de date toujours visible
-            date_prio = st.date_input("Dossiers reçus strictement AVANT cette date = Prioritaires :", value=datetime.today().date())
+            # Sélecteur de date toujours visible (Format mis à jour en JJ/MM/AAAA)
+            date_prio = st.date_input("Dossiers reçus strictement AVANT cette date = Prioritaires :", value=datetime.today().date(), format="DD/MM/YYYY")
 
             # --- CONFORT & CDC ---
             df_confort, df_cdc = pd.DataFrame(), pd.DataFrame()
