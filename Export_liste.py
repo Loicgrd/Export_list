@@ -212,9 +212,10 @@ with tab_generateur:
 
             # --- LISTE À EXPORTER (Filtrée) ---
             df_export = df_source.copy()
-            if 'Contrôle' in df_export.columns:
-                df_export = df_export[df_export['Contrôle'] != 'Non concerné']
             
+            # (J'ai supprimé le filtre sur 'Non concerné' ici)
+            
+            # On retire uniquement les dossiers qui sont déjà dans Confort ou CDC
             if 'Numéro dossier' in df_export.columns:
                 if not df_confort.empty:
                     dossiers_confort = df_confort['Numéro dossier'].dropna().unique()
