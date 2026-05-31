@@ -4,3 +4,4 @@ openpyxl
 xlsxwriter
 requests
 st-gsheets-connection
+plotly.express
