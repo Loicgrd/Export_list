@@ -95,7 +95,6 @@ def afficher_gestion_base(sheet_name, df_gsheet):
             st.success(f"✅ {len(st.session_state[state_trouves])} trouvés !")
             st.dataframe(pd.DataFrame(st.session_state[state_trouves]), hide_index=True)
             if st.button("✅ Confirmer l'ajout", key=f"btn_conf_{sheet_name}", type="primary"):
-                # Application de l'heure française
                 date_jour = datetime.now(TZ_FRANCE).strftime("%d/%m/%Y")
                 nom_col, siren_col, date_col = df_gsheet.columns[0], df_gsheet.columns[1], df_gsheet.columns[2]
                 nouveaux = [{nom_col: b['Nom'], siren_col: b['SIREN'], date_col: date_jour} for b in st.session_state[state_trouves]]
@@ -262,15 +261,16 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
 # ONGLET 1 : GÉNÉRATEUR PRINCIPAL
 # ==========================================
 with tab_generateur:
-    uploaded_file = st.file_uploader("Importer le fichier Excel (Export ODICEE)", type=["xlsx"])
+    uploaded_file = st.file_uploader("Importer le fichier Excel (Liste globale)", type=["xlsx"])
 
     if uploaded_file is not None:
         try:
             df_source = pd.read_excel(uploaded_file)
             st.success(f"Fichier chargé ! ({len(df_source)} lignes)")
 
+            # CORRECTION ICI : on ne convertit en date que si la colonne contient "date" (et non plus "période")
             for col in df_source.columns:
-                if 'date' in str(col).lower() or 'période' in str(col).lower():
+                if 'date' in str(col).lower():
                     df_source[col] = pd.to_datetime(df_source[col], errors='coerce')
 
             # --- ANALYSE ET DÉFINITION DE LA PRIORITÉ ---
@@ -358,14 +358,12 @@ with tab_generateur:
 
             # --- CRÉATION FICHIERS ET ZIP ---
             st.divider()
-            # Utilisation de l'heure française pour les noms de fichiers
             date_export = datetime.now(TZ_FRANCE).strftime("%d-%m-%Y")
             fichiers_a_zipper = {}
 
             nom_dcr = f"ODICEE-{date_export}-DCR_export_doc_com_non_vus.xlsx"
             fichiers_a_zipper[nom_dcr] = generer_excel_dcr(df_prio, df_classique, 'Liste à exporter')
             
-            # Nettoyage de la colonne SIREN pour Confort, CDC et ADMIN
             if not df_confort.empty:
                 df_confort = df_confort.drop(columns=['SIREN'], errors='ignore')
                 nom_confort = f"ODICEE-{date_export}-CONFORT_export_doc_com_non_vus.xlsx"
