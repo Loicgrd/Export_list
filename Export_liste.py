@@ -243,15 +243,13 @@ with tab_generateur:
             # --- ANALYSE ET DÉFINITION DE LA PRIORITÉ ---
             st.subheader("📅 Analyse et définition de la priorité (DCR)")
             
-            # --- NOUVEAU TABLEAU CROISÉ ---
+            # --- TABLEAU CROISÉ ---
             if st.toggle("📊 Afficher le tableau de synthèse"):
                 if 'Date réception' in df_source.columns and 'DCR' in df_source.columns:
-                    # Préparation des données pour le tableau
                     df_synth = df_source.dropna(subset=['Date réception']).copy()
                     df_synth['Date réception'] = pd.to_datetime(df_synth['Date réception']).dt.date
                     df_synth['DCR'] = df_synth['DCR'].fillna('Non renseigné')
                     
-                    # Création du tableau croisé (crosstab gère les marges / totaux automatiquement)
                     tableau = pd.crosstab(
                         index=df_synth['Date réception'], 
                         columns=df_synth['DCR'], 
@@ -259,11 +257,10 @@ with tab_generateur:
                         margins_name='Total'
                     )
                     
-                    # On isole le Total pour trier les dates de la plus récente à la plus ancienne
-                    tableau_dates = tableau.drop('Total').sort_index(ascending=False)
+                    # MODIFICATION : ascending=True pour avoir les dates récentes en bas
+                    tableau_dates = tableau.drop('Total').sort_index(ascending=True)
                     tableau_final = pd.concat([tableau_dates, tableau.loc[['Total']]])
                     
-                    # On convertit les dates en texte (jj/mm/aaaa) pour un bel affichage
                     index_formate = []
                     for idx in tableau_final.index:
                         if isinstance(idx, str):
@@ -272,34 +269,30 @@ with tab_generateur:
                             index_formate.append(idx.strftime('%d/%m/%Y'))
                     tableau_final.index = index_formate
 
-                    # Fonction pour appliquer les couleurs selon le délai (<= 5 jours) et griser les Totaux
                     def coloriser_delais(row):
                         styles = []
                         for col_name in row.index:
-                            # 1. Si on est sur la LIGNE Total ou la COLONNE Total -> Gris
                             if row.name == 'Total' or col_name == 'Total':
                                 styles.append('background-color: #e6e6e6; font-weight: bold; color: black')
                             else:
-                                # 2. Sinon, on évalue la date
                                 try:
                                     date_ligne = datetime.strptime(str(row.name), '%d/%m/%Y').date()
                                     jours_ecoules = (datetime.today().date() - date_ligne).days
                                     
                                     if jours_ecoules <= 5:
-                                        styles.append('background-color: #d4edda; color: #155724') # Vert
+                                        styles.append('background-color: #d4edda; color: #155724')
                                     else:
-                                        styles.append('background-color: #f8d7da; color: #721c24') # Rouge
+                                        styles.append('background-color: #f8d7da; color: #721c24')
                                 except:
                                     styles.append('')
                         return styles
 
-                    # Affichage du tableau colorisé
                     st.dataframe(tableau_final.style.apply(coloriser_delais, axis=1), use_container_width=True)
                 else:
                     st.warning("⚠️ Les colonnes 'Date réception' ou 'DCR' sont manquantes pour générer le tableau.")
             
-            # Sélecteur de date toujours visible (Format mis à jour en JJ/MM/AAAA)
-            date_prio = st.date_input("Dossiers reçus strictement AVANT cette date = Prioritaires :", value=datetime.today().date(), format="DD/MM/YYYY")
+            # MODIFICATION : "JUSQU'À" et format mis à jour
+            date_prio = st.date_input("Dossiers reçus JUSQU'À cette date (incluse) = Prioritaires :", value=datetime.today().date(), format="DD/MM/YYYY")
 
             # --- CONFORT & CDC ---
             df_confort, df_cdc = pd.DataFrame(), pd.DataFrame()
@@ -334,7 +327,8 @@ with tab_generateur:
             
             if 'Date réception' in df_export.columns:
                 dates_reception = pd.to_datetime(df_export['Date réception']).dt.date
-                mask_prio = dates_reception < date_prio
+                # MODIFICATION : On utilise <= au lieu de < pour inclure la journée sélectionnée
+                mask_prio = dates_reception <= date_prio
                 df_prio = df_export[mask_prio].copy()
                 df_classique = df_export[~mask_prio].copy()
 
