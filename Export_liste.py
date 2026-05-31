@@ -192,9 +192,14 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
         workbook = writer.book
         worksheet = workbook.add_worksheet(nom_feuille)
         
-        format_titre = workbook.add_format({
-            'bold': True, 'font_color': 'red', 'bg_color': 'yellow',
-            'align': 'center', 'valign': 'vcenter', 'border': 5, 'font_size': 14
+        # --- NOUVEAUX FORMATS POUR LES BANDEAUX ---
+        format_alerte_rouge = workbook.add_format({
+            'bold': True, 'italic': True, 'font_color': 'white', 'bg_color': 'red',
+            'align': 'center', 'valign': 'vcenter', 'font_size': 14, 'border': 1
+        })
+        format_alerte_bleue = workbook.add_format({
+            'bold': True, 'font_color': 'white', 'bg_color': '#3a75c4',
+            'align': 'center', 'valign': 'vcenter', 'font_size': 14, 'border': 1
         })
         format_header = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
         
@@ -203,7 +208,7 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
         
         # 1. LISTE PRIORITAIRE
         if not df_prio.empty:
-            worksheet.merge_range(current_row, 0, current_row, max_col - 1, "Liste Prioritaire", format_titre)
+            worksheet.merge_range(current_row, 0, current_row, max_col - 1, "↓ /!\\ Liste prioritaire (à faire avant de passer sur une DCR) /!\\ ↓", format_alerte_rouge)
             current_row += 1
             for col_num, value in enumerate(df_prio.columns.values):
                 worksheet.write(current_row, col_num, value, format_header)
@@ -211,12 +216,14 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
             df_prio.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
             current_row += len(df_prio)
             
-        # 2. LISTE CLASSIQUE
-        if not df_classique.empty or df_prio.empty:
-            worksheet.merge_range(current_row, 0, current_row, max_col - 1, "Liste Classique", format_titre)
+            worksheet.merge_range(current_row, 0, current_row, max_col - 1, "↑ /!\\ Liste prioritaire (à faire avant de passer sur une DCR) /!\\ ↑", format_alerte_rouge)
             current_row += 1
             
-            # Mémorisation de la ligne où se trouvent les en-têtes pour appliquer le filtre plus tard
+        # 2. LISTE CLASSIQUE
+        if not df_classique.empty or df_prio.empty:
+            worksheet.merge_range(current_row, 0, current_row, max_col - 1, "Puis basculer sur DCR (pensez à vérifier votre planning).", format_alerte_bleue)
+            current_row += 1
+            
             ligne_entete_classique = current_row 
             
             for col_num, value in enumerate(df_classique.columns.values):
@@ -227,12 +234,10 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
                 df_classique.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
                 current_row += len(df_classique)
                 
-            # --- AJOUT DU FILTRE EXCEL ICI ---
+            # Applique le filtre de la ligne des en-têtes jusqu'à la fin des données classiques
             if not df_classique.empty:
-                # Applique le filtre de la ligne des en-têtes jusqu'à la dernière ligne de données
                 worksheet.autofilter(ligne_entete_classique, 0, current_row - 1, max_col - 1)
                 
-        # Ajustement de la largeur des colonnes
         for i in range(max_col):
             worksheet.set_column(i, i, 16)
             
@@ -271,7 +276,6 @@ with tab_generateur:
                         margins_name='Total'
                     )
                     
-                    # ascending=True pour avoir les dates récentes en bas
                     tableau_dates = tableau.drop('Total').sort_index(ascending=True)
                     tableau_final = pd.concat([tableau_dates, tableau.loc[['Total']]])
                     
@@ -283,9 +287,8 @@ with tab_generateur:
                             index_formate.append(idx.strftime('%d/%m/%Y'))
                     tableau_final.index = index_formate
 
-                    # --- NOUVELLE LOGIQUE : Récupérer exactement les 5 dates les plus récentes ---
                     dates_sans_total = [d for d in tableau_final.index if d != 'Total']
-                    top_5_dates = dates_sans_total[-5:] # On prend les 5 derniers éléments (les plus récents)
+                    top_5_dates = dates_sans_total[-5:]
 
                     def coloriser_delais(row):
                         styles = []
@@ -293,10 +296,8 @@ with tab_generateur:
                             if row.name == 'Total' or col_name == 'Total':
                                 styles.append('background-color: #e6e6e6; font-weight: bold; color: black')
                             else:
-                                # Si la date fait partie de nos 5 plus récentes -> Vert
                                 if row.name in top_5_dates:
                                     styles.append('background-color: #d4edda; color: #155724')
-                                # Sinon -> Rouge
                                 else:
                                     styles.append('background-color: #f8d7da; color: #721c24')
                         return styles
@@ -305,8 +306,8 @@ with tab_generateur:
                 else:
                     st.warning("⚠️ Les colonnes 'Date réception' ou 'DCR' sont manquantes pour générer le tableau.")
             
-            # MODIFICATION : "JUSQU'À" et format mis à jour
-            date_prio = st.date_input("Dossiers reçus JUSQU'À cette date (incluse) = Prioritaires :", value=datetime.today().date(), format="DD/MM/YYYY")
+            # MODIFICATION : value=None pour forcer le champ vide par défaut
+            date_prio = st.date_input("Dossiers reçus JUSQU'À cette date (incluse) = Prioritaires :", value=None, format="DD/MM/YYYY")
 
             # --- CONFORT & CDC ---
             df_confort, df_cdc = pd.DataFrame(), pd.DataFrame()
@@ -339,9 +340,9 @@ with tab_generateur:
             # --- SÉPARATION DCR (Prioritaire / Classique) ---
             df_prio, df_classique = pd.DataFrame(), df_export.copy()
             
-            if 'Date réception' in df_export.columns:
+            # MODIFICATION : Vérification que date_prio a bien été saisie par l'utilisateur
+            if 'Date réception' in df_export.columns and date_prio is not None:
                 dates_reception = pd.to_datetime(df_export['Date réception']).dt.date
-                # MODIFICATION : On utilise <= au lieu de < pour inclure la journée sélectionnée
                 mask_prio = dates_reception <= date_prio
                 df_prio = df_export[mask_prio].copy()
                 df_classique = df_export[~mask_prio].copy()
