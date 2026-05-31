@@ -151,6 +151,33 @@ with tab_cdc:
 
 
 # ==========================================
+# FONCTION UTILITAIRE POUR GÉNÉRER L'EXCEL
+# ==========================================
+def generer_excel_formate(df, nom_feuille):
+    buffer = io.BytesIO()
+    # Le paramètre datetime_format garantit que les dates s'affichent en jj/mm/aaaa
+    with pd.ExcelWriter(buffer, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
+        df.to_excel(writer, index=False, sheet_name=nom_feuille)
+        worksheet = writer.sheets[nom_feuille]
+        
+        # Récupérer les dimensions du tableau
+        (max_row, max_col) = df.shape
+        
+        if max_col > 0:
+            # 1. Ajouter le filtre automatique sur la première ligne
+            worksheet.autofilter(0, 0, max_row, max_col - 1)
+            
+            # 2. Figer la première ligne (très pratique pour scroller)
+            worksheet.freeze_panes(1, 0)
+            
+            # 3. Ajuster la largeur de toutes les colonnes pour que ce soit lisible
+            for i in range(max_col):
+                worksheet.set_column(i, i, 16) 
+                
+    return buffer.getvalue()
+
+
+# ==========================================
 # ONGLET 1 : GÉNÉRATEUR D'EXCEL
 # ==========================================
 with tab_generateur:
@@ -161,16 +188,19 @@ with tab_generateur:
             df_source = pd.read_excel(uploaded_file)
             st.success(f"Fichier chargé ! ({len(df_source)} lignes)")
 
-            for col in ['Date réception', "Date d'engagement", 'Date prévisionnelle de réalisation', 'Date réelle de réalisation']:
-                if col in df_source.columns:
-                    df_source[col] = pd.to_datetime(df_source[col], errors='coerce').dt.date
+            # --- CORRECTION DES DATES ---
+            # On cherche toutes les colonnes contenant "date" ou "période" pour les forcer en vrai format Date
+            for col in df_source.columns:
+                if 'date' in str(col).lower() or 'période' in str(col).lower():
+                    # On retire le '.dt.date' de l'ancien code pour laisser l'objet Date entier, 
+                    # c'est ce qui permet à xlsxwriter d'appliquer son format jj/mm/aaaa
+                    df_source[col] = pd.to_datetime(df_source[col], errors='coerce')
 
             # --- EXTRACTION CONFORT ---
             df_confort = pd.DataFrame()
             if 'Bénéficiaire' in df_source.columns:
                 df_confort = df_source[df_source['Bénéficiaire'].isin(dict_confort.keys())].copy()
                 if not df_confort.empty:
-                    # On insère juste le SIREN au début, et on garde TOUTES les autres colonnes intactes
                     df_confort.insert(0, 'SIREN', df_confort['Bénéficiaire'].map(dict_confort))
 
             # --- EXTRACTION CDC ---
@@ -178,7 +208,6 @@ with tab_generateur:
             if 'Bénéficiaire' in df_source.columns:
                 df_cdc = df_source[df_source['Bénéficiaire'].isin(dict_cdc.keys())].copy()
                 if not df_cdc.empty:
-                    # Pareil pour CDC
                     df_cdc.insert(0, 'SIREN', df_cdc['Bénéficiaire'].map(dict_cdc))
 
             # --- LISTE À EXPORTER (Filtrée) ---
@@ -201,19 +230,15 @@ with tab_generateur:
             with c1:
                 st.subheader("📊 Liste Principale")
                 st.text(f"{len(df_export)} lignes.")
-                buffer_export = io.BytesIO()
-                with pd.ExcelWriter(buffer_export, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as w:
-                    df_export.to_excel(w, index=False, sheet_name='Liste à exporter')
-                st.download_button("📥 Télécharger Liste", buffer_export.getvalue(), "Liste_a_exporter.xlsx", use_container_width=True)
+                excel_data = generer_excel_formate(df_export, 'Liste à exporter')
+                st.download_button("📥 Télécharger Liste", excel_data, "Liste_a_exporter.xlsx", use_container_width=True)
                 
             with c2:
                 st.subheader("🏢 Fichier Confort")
                 st.text(f"{len(df_confort)} lignes.")
                 if not df_confort.empty:
-                    buffer_confort = io.BytesIO()
-                    with pd.ExcelWriter(buffer_confort, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as w:
-                        df_confort.to_excel(w, index=False, sheet_name='Confort')
-                    st.download_button("📥 Télécharger Confort", buffer_confort.getvalue(), "Fichier_Confort.xlsx", use_container_width=True)
+                    excel_data = generer_excel_formate(df_confort, 'Confort')
+                    st.download_button("📥 Télécharger Confort", excel_data, "Fichier_Confort.xlsx", use_container_width=True)
                 else:
                     st.info("Aucun bailleur Confort trouvé.")
                     
@@ -221,15 +246,10 @@ with tab_generateur:
                 st.subheader("🏛️ Fichier CDC")
                 st.text(f"{len(df_cdc)} lignes.")
                 if not df_cdc.empty:
-                    buffer_cdc = io.BytesIO()
-                    with pd.ExcelWriter(buffer_cdc, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as w:
-                        df_cdc.to_excel(w, index=False, sheet_name='CDC')
-                    st.download_button("📥 Télécharger CDC", buffer_cdc.getvalue(), "Fichier_CDC.xlsx", use_container_width=True)
+                    excel_data = generer_excel_formate(df_cdc, 'CDC')
+                    st.download_button("📥 Télécharger CDC", excel_data, "Fichier_CDC.xlsx", use_container_width=True)
                 else:
                     st.info("Aucun bailleur CDC trouvé.")
 
         except Exception as e:
-            st.error(f"Erreur : {e}")
-
-        except Exception as e:
-            st.error(f"Erreur : {e}")
+            st.error(f"Erreur lors de la génération de l'Excel : {e}")
