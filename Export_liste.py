@@ -256,35 +256,43 @@ with tab_generateur:
 
             # --- TÉLÉCHARGEMENTS ---
             st.divider()
-            # On passe à 4 colonnes pour gérer l'onglet ADMIN
+            
+            # 1. On génère la date du jour au format jj-mm-aaaa
+            date_export = datetime.now().strftime("%d-%m-%Y")
+            
+            # On prépare les 4 colonnes
             c1, c2, c3, c4 = st.columns(4)
             
             with c1:
-                st.subheader("📊 Liste Principale")
+                st.subheader("📊 Liste Principale (DCR)")
                 st.text(f"{len(df_export)} lignes.")
                 excel_data = generer_excel_formate(df_export, 'Liste à exporter')
-                st.download_button("📥 Télécharger Liste", excel_data, "Liste_a_exporter.xlsx", use_container_width=True)
+                nom_fichier_dcr = f"ODICEE-{date_export}-DCR_export_doc_com_non_vu.xlsx"
+                st.download_button("📥 Télécharger DCR", excel_data, nom_fichier_dcr, use_container_width=True)
                 
             with c2:
                 st.subheader("🏢 Fichier Confort")
                 st.text(f"{len(df_confort)} lignes.")
                 if not df_confort.empty:
                     excel_data = generer_excel_formate(df_confort, 'Confort')
-                    st.download_button("📥 Télécharger Confort", excel_data, "Fichier_Confort.xlsx", use_container_width=True)
+                    nom_fichier_confort = f"ODICEE-{date_export}-CONFORT_export_doc_com_non_vu.xlsx"
+                    st.download_button("📥 Télécharger Confort", excel_data, nom_fichier_confort, use_container_width=True)
                     
             with c3:
                 st.subheader("🏛️ Fichier CDC")
                 st.text(f"{len(df_cdc)} lignes.")
                 if not df_cdc.empty:
                     excel_data = generer_excel_formate(df_cdc, 'CDC')
-                    st.download_button("📥 Télécharger CDC", excel_data, "Fichier_CDC.xlsx", use_container_width=True)
+                    nom_fichier_cdc = f"ODICEE-{date_export}-CDC_export_doc_com_non_vu.xlsx"
+                    st.download_button("📥 Télécharger CDC", excel_data, nom_fichier_cdc, use_container_width=True)
                     
             with c4:
                 st.subheader("🛡️ Fichier ADMIN")
                 st.text(f"{len(df_admin)} lignes.")
                 if not df_admin.empty:
                     excel_data = generer_excel_formate(df_admin, 'ADMIN')
-                    st.download_button("📥 Télécharger ADMIN", excel_data, "Fichier_ADMIN.xlsx", use_container_width=True)
+                    nom_fichier_admin = f"ODICEE-{date_export}-ADMIN_export_doc_com_non_vu.xlsx"
+                    st.download_button("📥 Télécharger ADMIN", excel_data, nom_fichier_admin, use_container_width=True)
 
         except Exception as e:
             st.error(f"Erreur lors de la génération de l'Excel : {e}")
