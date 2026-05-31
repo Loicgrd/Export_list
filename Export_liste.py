@@ -5,7 +5,7 @@ import requests
 import zipfile
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
-from xlsxwriter.utility import xl_col_to_name  # <--- NOUVEL IMPORT NÉCESSAIRE
+from xlsxwriter.utility import xl_col_to_name
 
 st.set_page_config(page_title="Générateur d'Exports CEE", layout="wide")
 
@@ -145,7 +145,7 @@ with tab_admin:
             st.dataframe(pd.DataFrame(mots_coms_admin, columns=["Mots-clés (Commentaires)"]), hide_index=True, use_container_width=True)
 
 # ==========================================
-# GÉNÉRATEURS EXCEL (Formules croisées magiques incluses)
+# GÉNÉRATEURS EXCEL (Formules croisées optimisées)
 # ==========================================
 def generer_excel_formate(df, nom_feuille):
     if not df.empty and 'Pris par (Initiales)' not in df.columns:
@@ -161,7 +161,10 @@ def generer_excel_formate(df, nom_feuille):
             worksheet.autofilter(0, 0, max_row, max_col - 1)
             worksheet.freeze_panes(1, 0)
             
-            # Application de la coloration de groupe
+            # --- OPTIMISATION ---
+            # On calcule le nombre total exact de lignes pour ne pas faire bugger SharePoint
+            total_lignes = max_row + 1
+            
             dossier_col_letter = None
             if 'Numéro dossier' in df.columns:
                 dossier_col_letter = xl_col_to_name(df.columns.get_loc('Numéro dossier'))
@@ -169,8 +172,8 @@ def generer_excel_formate(df, nom_feuille):
             fmt_en_cours = writer.book.add_format({'bg_color': '#FFE699', 'font_color': '#595959'})
             
             if dossier_col_letter:
-                # Si n'importe quelle ligne avec le même dossier a des initiales, on colorie
-                formula = f'=COUNTIFS(${dossier_col_letter}:${dossier_col_letter}, ${dossier_col_letter}2, $A:$A, "<>")>0'
+                # La formule s'arrête à 'total_lignes' au lieu de scanner toute la colonne ($A:$A)
+                formula = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes}, ${dossier_col_letter}2, $A$1:$A${total_lignes}, "<>")>0'
             else:
                 formula = '=$A2<>""'
                 
@@ -185,7 +188,6 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
     if not df_classique.empty and 'Pris par (Initiales)' not in df_classique.columns:
         df_classique.insert(0, 'Pris par (Initiales)', '')
 
-    # Identification de la colonne "Numéro dossier"
     dossier_col_letter = None
     if not df_classique.empty and 'Numéro dossier' in df_classique.columns:
         dossier_col_letter = xl_col_to_name(df_classique.columns.get_loc('Numéro dossier'))
@@ -205,6 +207,9 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
         current_row = 0
         max_col = len(df_classique.columns) if not df_classique.empty else (len(df_prio.columns) if not df_prio.empty else 1)
         
+        # --- OPTIMISATION (Calcul de la limite max de l'Excel pour SharePoint) ---
+        total_lignes_excel = len(df_prio) + len(df_classique) + 20 
+        
         # --- 1. LISTE PRIORITAIRE ---
         if not df_prio.empty:
             worksheet.merge_range(current_row, 0, current_row, max_col - 1, "↓ /!\\ Liste prioritaire (à faire avant de passer sur une DCR) /!\\ ↓", fmt_rouge)
@@ -216,9 +221,9 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
             df_prio.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
             end_prio = current_row + len(df_prio) - 1
             
-            # Formule magique
+            # Formule optimisée (bornée à total_lignes_excel)
             if dossier_col_letter:
-                formule_prio = f'=COUNTIFS(${dossier_col_letter}:${dossier_col_letter}, ${dossier_col_letter}{start_prio + 1}, $A:$A, "<>")>0'
+                formule_prio = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes_excel}, ${dossier_col_letter}{start_prio + 1}, $A$1:$A${total_lignes_excel}, "<>")>0'
             else: formule_prio = f'=$A{start_prio + 1}<>""'
             worksheet.conditional_format(start_prio, 0, end_prio, max_col - 1, {'type': 'formula', 'criteria': formule_prio, 'format': fmt_en_cours})
             
@@ -239,9 +244,9 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
                 df_classique.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
                 end_classique = current_row + len(df_classique) - 1
                 
-                # Formule magique
+                # Formule optimisée (bornée à total_lignes_excel)
                 if dossier_col_letter:
-                    formule_classique = f'=COUNTIFS(${dossier_col_letter}:${dossier_col_letter}, ${dossier_col_letter}{start_classique + 1}, $A:$A, "<>")>0'
+                    formule_classique = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes_excel}, ${dossier_col_letter}{start_classique + 1}, $A$1:$A${total_lignes_excel}, "<>")>0'
                 else: formule_classique = f'=$A{start_classique + 1}<>""'
                 worksheet.conditional_format(start_classique, 0, end_classique, max_col - 1, {'type': 'formula', 'criteria': formule_classique, 'format': fmt_en_cours})
                 
@@ -331,11 +336,19 @@ with tab_generateur:
                 df_admin = df_export[mask_admin].copy()
                 df_export = df_export[~mask_admin]
 
-            # --- TRI GLOBAL DES BASES (Astuce pour tout regrouper) ---
-            if 'Numéro dossier' in df_export.columns: df_export = df_export.sort_values(by=['Numéro dossier', 'Date réception'], na_position='last')
-            if 'Numéro dossier' in df_confort.columns: df_confort = df_confort.sort_values(by=['Numéro dossier', 'Date réception'], na_position='last')
-            if 'Numéro dossier' in df_cdc.columns: df_cdc = df_cdc.sort_values(by=['Numéro dossier', 'Date réception'], na_position='last')
-            if 'Numéro dossier' in df_admin.columns: df_admin = df_admin.sort_values(by=['Numéro dossier', 'Date réception'], na_position='last')
+            # --- NOUVEAU TRI : Par Date de réception, puis par Numéro ---
+            def trier_df(df):
+                cols_tri = []
+                if 'Date réception' in df.columns: cols_tri.append('Date réception')
+                if 'Numéro dossier' in df.columns: cols_tri.append('Numéro dossier')
+                if cols_tri:
+                    return df.sort_values(by=cols_tri, na_position='last')
+                return df
+                
+            df_export = trier_df(df_export)
+            df_confort = trier_df(df_confort)
+            df_cdc = trier_df(df_cdc)
+            df_admin = trier_df(df_admin)
 
             # --- SÉPARATION DCR (Prioritaire / Classique) ---
             df_prio, df_classique = pd.DataFrame(), df_export.copy()
