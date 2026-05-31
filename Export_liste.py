@@ -148,8 +148,9 @@ with tab_admin:
 # GÉNÉRATEURS EXCEL (Formules croisées optimisées)
 # ==========================================
 def generer_excel_formate(df, nom_feuille):
-    if not df.empty and 'Pris par (Initiales)' not in df.columns:
-        df.insert(0, 'Pris par (Initiales)', '')
+    # Changement de nom de la colonne
+    if not df.empty and 'Initiales' not in df.columns:
+        df.insert(0, 'Initiales', '')
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
@@ -161,8 +162,6 @@ def generer_excel_formate(df, nom_feuille):
             worksheet.autofilter(0, 0, max_row, max_col - 1)
             worksheet.freeze_panes(1, 0)
             
-            # --- OPTIMISATION ---
-            # On calcule le nombre total exact de lignes pour ne pas faire bugger SharePoint
             total_lignes = max_row + 1
             
             dossier_col_letter = None
@@ -172,7 +171,6 @@ def generer_excel_formate(df, nom_feuille):
             fmt_en_cours = writer.book.add_format({'bg_color': '#FFE699', 'font_color': '#595959'})
             
             if dossier_col_letter:
-                # La formule s'arrête à 'total_lignes' au lieu de scanner toute la colonne ($A:$A)
                 formula = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes}, ${dossier_col_letter}2, $A$1:$A${total_lignes}, "<>")>0'
             else:
                 formula = '=$A2<>""'
@@ -183,10 +181,11 @@ def generer_excel_formate(df, nom_feuille):
     return buffer.getvalue()
 
 def generer_excel_dcr(df_prio, df_classique, nom_feuille):
-    if not df_prio.empty and 'Pris par (Initiales)' not in df_prio.columns:
-        df_prio.insert(0, 'Pris par (Initiales)', '')
-    if not df_classique.empty and 'Pris par (Initiales)' not in df_classique.columns:
-        df_classique.insert(0, 'Pris par (Initiales)', '')
+    # Changement de nom de la colonne
+    if not df_prio.empty and 'Initiales' not in df_prio.columns:
+        df_prio.insert(0, 'Initiales', '')
+    if not df_classique.empty and 'Initiales' not in df_classique.columns:
+        df_classique.insert(0, 'Initiales', '')
 
     dossier_col_letter = None
     if not df_classique.empty and 'Numéro dossier' in df_classique.columns:
@@ -202,12 +201,11 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
         fmt_rouge = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': 'red', 'align': 'center', 'valign': 'vcenter', 'font_size': 12})
         fmt_bleu = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': '#3a75c4', 'align': 'center', 'valign': 'vcenter', 'font_size': 12})
         fmt_header = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
-        fmt_en_cours = workbook.add_format({'bg_color': '#FFE699', 'font_color': '#595959'}) # Orange clair
+        fmt_en_cours = workbook.add_format({'bg_color': '#FFE699', 'font_color': '#595959'})
         
         current_row = 0
         max_col = len(df_classique.columns) if not df_classique.empty else (len(df_prio.columns) if not df_prio.empty else 1)
         
-        # --- OPTIMISATION (Calcul de la limite max de l'Excel pour SharePoint) ---
         total_lignes_excel = len(df_prio) + len(df_classique) + 20 
         
         # --- 1. LISTE PRIORITAIRE ---
@@ -221,7 +219,6 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
             df_prio.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
             end_prio = current_row + len(df_prio) - 1
             
-            # Formule optimisée (bornée à total_lignes_excel)
             if dossier_col_letter:
                 formule_prio = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes_excel}, ${dossier_col_letter}{start_prio + 1}, $A$1:$A${total_lignes_excel}, "<>")>0'
             else: formule_prio = f'=$A{start_prio + 1}<>""'
@@ -244,7 +241,6 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
                 df_classique.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
                 end_classique = current_row + len(df_classique) - 1
                 
-                # Formule optimisée (bornée à total_lignes_excel)
                 if dossier_col_letter:
                     formule_classique = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes_excel}, ${dossier_col_letter}{start_classique + 1}, $A$1:$A${total_lignes_excel}, "<>")>0'
                 else: formule_classique = f'=$A{start_classique + 1}<>""'
@@ -261,7 +257,7 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
 # ONGLET 1 : GÉNÉRATEUR PRINCIPAL
 # ==========================================
 with tab_generateur:
-    uploaded_file = st.file_uploader("Importer le fichier Excel (Liste globale)", type=["xlsx"])
+    uploaded_file = st.file_uploader("Importer le fichier Excel (Export ODICEE)", type=["xlsx"])
 
     if uploaded_file is not None:
         try:
@@ -314,10 +310,7 @@ with tab_generateur:
             df_confort, df_cdc = pd.DataFrame(), pd.DataFrame()
             if 'Bénéficiaire' in df_source.columns:
                 df_confort = df_source[df_source['Bénéficiaire'].isin(dict_confort.keys())].copy()
-                if not df_confort.empty: df_confort.insert(0, 'SIREN', df_confort['Bénéficiaire'].map(dict_confort))
-                
                 df_cdc = df_source[df_source['Bénéficiaire'].isin(dict_cdc.keys())].copy()
-                if not df_cdc.empty: df_cdc.insert(0, 'SIREN', df_cdc['Bénéficiaire'].map(dict_cdc))
 
             # --- LISTE À EXPORTER (Base) ---
             df_export = df_source.copy()
@@ -336,7 +329,7 @@ with tab_generateur:
                 df_admin = df_export[mask_admin].copy()
                 df_export = df_export[~mask_admin]
 
-            # --- NOUVEAU TRI : Par Date de réception, puis par Numéro ---
+            # --- TRI GLOBAL DES BASES ---
             def trier_df(df):
                 cols_tri = []
                 if 'Date réception' in df.columns: cols_tri.append('Date réception')
@@ -366,15 +359,19 @@ with tab_generateur:
             nom_dcr = f"ODICEE-{date_export}-DCR_export_doc_com_non_vus.xlsx"
             fichiers_a_zipper[nom_dcr] = generer_excel_dcr(df_prio, df_classique, 'Liste à exporter')
             
+            # Nettoyage de la colonne SIREN pour Confort, CDC et ADMIN
             if not df_confort.empty:
+                df_confort = df_confort.drop(columns=['SIREN'], errors='ignore')
                 nom_confort = f"ODICEE-{date_export}-CONFORT_export_doc_com_non_vus.xlsx"
                 fichiers_a_zipper[nom_confort] = generer_excel_formate(df_confort, 'Confort')
                 
             if not df_cdc.empty:
+                df_cdc = df_cdc.drop(columns=['SIREN'], errors='ignore')
                 nom_cdc = f"ODICEE-{date_export}-CDC_export_doc_com_non_vus.xlsx"
                 fichiers_a_zipper[nom_cdc] = generer_excel_formate(df_cdc, 'CDC')
                 
             if not df_admin.empty:
+                df_admin = df_admin.drop(columns=['SIREN'], errors='ignore')
                 nom_admin = f"ODICEE-{date_export}-ADMIN_export_doc_com_non_vus.xlsx"
                 fichiers_a_zipper[nom_admin] = generer_excel_formate(df_admin, 'ADMIN')
 
