@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import requests
-import zipfile  # <--- NOUVEAU : Ajoute ceci en haut !
+import zipfile
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 
@@ -32,7 +32,6 @@ def load_worksheet(sheet_name):
         st.error(f"Erreur de lecture de la feuille '{sheet_name}' : {e}")
         return {}, pd.DataFrame(columns=["Nom", "SIREN", "Date d'ajout"])
 
-# --- NOUVEAU : CHARGEMENT DE LA BASE ADMIN ---
 @st.cache_data(ttl=10)
 def load_admin():
     try:
@@ -40,7 +39,6 @@ def load_admin():
         if df.empty:
             return [], []
             
-        # Nettoyage et récupération des listes de mots-clés
         mots_docs = [str(x).strip() for x in df.get("Nom du document", pd.Series()).dropna() if str(x).strip() and str(x).strip().lower() != 'nan']
         mots_coms = [str(x).strip() for x in df.get("Commentaire", pd.Series()).dropna() if str(x).strip() and str(x).strip().lower() != 'nan']
         
@@ -55,12 +53,13 @@ mots_docs_admin, mots_coms_admin = load_admin()
 
 st.title("Générateur d'Exports CEE")
 
-# --- AJOUT DU 4ÈME ONGLET ---
-tab_generateur, tab_confort, tab_cdc, tab_admin = st.tabs([
+# --- AJOUT DU 5ÈME ONGLET ---
+tab_generateur, tab_confort, tab_cdc, tab_admin, tab_prio = st.tabs([
     "📊 Générateur", 
     "⚙️ Base Confort", 
     "⚙️ Base CDC",
-    "🛡️ Filtres ADMIN"
+    "🛡️ Filtres ADMIN",
+    "⭐ Liste Prioritaire"
 ])
 
 # ==========================================
@@ -78,7 +77,7 @@ def afficher_gestion_base(sheet_name, df_gsheet):
     st.subheader("➕ Ajouter plusieurs bailleurs (par SIREN)")
     liste_sirens_brut = st.text_area(f"Collez vos SIREN ici :", key=f"input_siren_{sheet_name}")
     
-    if st.button("🔍 Rechercher les SIREN", key=f"btn_search_{sheet_name}"):
+    if st.button("🔍 Rechercher", key=f"btn_search_{sheet_name}"):
         sirens = [s.strip() for s in liste_sirens_brut.replace('\n', ',').split(',') if s.strip()]
         trouves = []
         with st.spinner("Recherche..."):
@@ -109,19 +108,12 @@ def afficher_gestion_base(sheet_name, df_gsheet):
                 if st.button("❌ Annuler", key=f"btn_annul_{sheet_name}"):
                     st.session_state[state_recherche] = False
                     st.rerun()
-        else:
-            st.warning("❌ Aucun trouvé.")
-            if st.button("Nouvelle recherche", key=f"btn_nouv_{sheet_name}"):
-                st.session_state[state_recherche] = False
-                st.rerun()
 
     st.divider()
     st.subheader("📋 Liste actuelle")
     if not df_gsheet.empty:
         df_display = df_gsheet[[df_gsheet.columns[2], df_gsheet.columns[0], df_gsheet.columns[1]]]
         st.dataframe(df_display, use_container_width=True, hide_index=True)
-    else:
-        st.info("La liste est vide.")
 
     st.subheader("🗑️ Supprimer")
     if not df_gsheet.empty:
@@ -138,8 +130,9 @@ with tab_confort:
 with tab_cdc:
     afficher_gestion_base("CDC", df_cdc_gsheet)
 
+
 # ==========================================
-# NOUVEAU : GESTION DES FILTRES ADMIN
+# GESTION DES FILTRES ADMIN
 # ==========================================
 def sauvegarder_admin(l_docs, l_coms):
     max_len = max(len(l_docs), len(l_coms))
@@ -153,44 +146,54 @@ def sauvegarder_admin(l_docs, l_coms):
 
 with tab_admin:
     st.header("🛠️ Mots-clés pour le tri automatique ADMIN")
-    st.info("Tout dossier contenant l'un de ces mots-clés dans la colonne correspondante sera isolé dans l'export ADMIN.")
-    
     col_d, col_c = st.columns(2)
-    
-    # --- Colonne NOM DU DOCUMENT ---
     with col_d:
         st.subheader("📄 Colonne 'Nom du document'")
         nouveau_doc = st.text_input("Ajouter un mot-clé (ex: Visa) :")
         if st.button("➕ Ajouter", key="add_doc") and nouveau_doc:
             if nouveau_doc not in mots_docs_admin:
                 sauvegarder_admin(mots_docs_admin + [nouveau_doc], mots_coms_admin)
-                
         if mots_docs_admin:
             a_suppr_doc = st.multiselect("Supprimer :", mots_docs_admin, key="suppr_doc")
             if st.button("🗑️ Enlever", key="btn_suppr_doc") and a_suppr_doc:
                 sauvegarder_admin([m for m in mots_docs_admin if m not in a_suppr_doc], mots_coms_admin)
-                
             st.dataframe(pd.DataFrame(mots_docs_admin, columns=["Mots-clés (Documents)"]), hide_index=True, use_container_width=True)
 
-    # --- Colonne COMMENTAIRE ---
     with col_c:
         st.subheader("💬 Colonne 'Commentaire'")
         nouveau_com = st.text_input("Ajouter un mot-clé (ex: Abandon) :")
         if st.button("➕ Ajouter", key="add_com") and nouveau_com:
             if nouveau_com not in mots_coms_admin:
                 sauvegarder_admin(mots_docs_admin, mots_coms_admin + [nouveau_com])
-                
         if mots_coms_admin:
             a_suppr_com = st.multiselect("Supprimer :", mots_coms_admin, key="suppr_com")
             if st.button("🗑️ Enlever", key="btn_suppr_com") and a_suppr_com:
                 sauvegarder_admin(mots_docs_admin, [m for m in mots_coms_admin if m not in a_suppr_com])
-                
             st.dataframe(pd.DataFrame(mots_coms_admin, columns=["Mots-clés (Commentaires)"]), hide_index=True, use_container_width=True)
 
+
 # ==========================================
-# GÉNÉRATEUR EXCEL
+# NOUVEAU : GESTION DATE PRIORITAIRE
+# ==========================================
+with tab_prio:
+    st.header("⭐ Réglage de la Date Prioritaire pour l'export DCR")
+    st.info("Les dossiers dont la 'Date réception' est strictement antérieure à la date choisie seront encadrés en haut de la liste principale.")
+    
+    if "date_prio" not in st.session_state:
+        st.session_state.date_prio = None
+        
+    date_choisie = st.date_input("Sélectionner la date limite :", value=st.session_state.date_prio if st.session_state.date_prio else datetime.today())
+    
+    if st.button("💾 Appliquer cette date", type="primary"):
+        st.session_state.date_prio = date_choisie
+        st.success(f"Filtre activé : les dossiers reçus avant le {date_choisie.strftime('%d/%m/%Y')} seront classés comme prioritaires.")
+
+
+# ==========================================
+# GÉNÉRATEURS EXCEL (Standard et DCR)
 # ==========================================
 def generer_excel_formate(df, nom_feuille):
+    """Générateur pour Confort, CDC et Admin"""
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
         df.to_excel(writer, index=False, sheet_name=nom_feuille)
@@ -203,6 +206,54 @@ def generer_excel_formate(df, nom_feuille):
                 worksheet.set_column(i, i, 16) 
     return buffer.getvalue()
 
+def generer_excel_dcr(df_prio, df_classique, nom_feuille):
+    """Générateur spécial pour la DCR avec encadrés Prioritaires et Classiques"""
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
+        workbook = writer.book
+        worksheet = workbook.add_worksheet(nom_feuille)
+        
+        # Format des Bandeaux (Jaune, texte rouge, centré, bordures épaisses)
+        format_titre = workbook.add_format({
+            'bold': True, 'font_color': 'red', 'bg_color': 'yellow',
+            'align': 'center', 'valign': 'vcenter', 'border': 5, 'font_size': 14
+        })
+        # Format des en-têtes
+        format_header = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
+        
+        current_row = 0
+        max_col = len(df_classique.columns) if not df_classique.empty else (len(df_prio.columns) if not df_prio.empty else 1)
+        
+        # 1. LISTE PRIORITAIRE
+        if not df_prio.empty:
+            worksheet.merge_range(current_row, 0, current_row, max_col - 1, "Liste Prioritaire", format_titre)
+            current_row += 1
+            for col_num, value in enumerate(df_prio.columns.values):
+                worksheet.write(current_row, col_num, value, format_header)
+            current_row += 1
+            df_prio.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
+            current_row += len(df_prio)
+            
+        # 2. LISTE CLASSIQUE
+        if not df_classique.empty or df_prio.empty:
+            worksheet.merge_range(current_row, 0, current_row, max_col - 1, "Liste Classique", format_titre)
+            current_row += 1
+            for col_num, value in enumerate(df_classique.columns.values):
+                worksheet.write(current_row, col_num, value, format_header)
+            current_row += 1
+            if not df_classique.empty:
+                df_classique.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
+                
+        # Ajustement de la largeur des colonnes
+        for i in range(max_col):
+            worksheet.set_column(i, i, 16)
+            
+    return buffer.getvalue()
+
+
+# ==========================================
+# ONGLET 1 : GÉNÉRATEUR PRINCIPAL
+# ==========================================
 with tab_generateur:
     uploaded_file = st.file_uploader("Importer le fichier Excel (Liste globale)", type=["xlsx"])
 
@@ -211,124 +262,104 @@ with tab_generateur:
             df_source = pd.read_excel(uploaded_file)
             st.success(f"Fichier chargé ! ({len(df_source)} lignes)")
 
+            # Traitement des dates
             for col in df_source.columns:
                 if 'date' in str(col).lower() or 'période' in str(col).lower():
                     df_source[col] = pd.to_datetime(df_source[col], errors='coerce')
 
-            df_confort = pd.DataFrame()
+            # --- CONFORT & CDC ---
+            df_confort, df_cdc = pd.DataFrame(), pd.DataFrame()
             if 'Bénéficiaire' in df_source.columns:
                 df_confort = df_source[df_source['Bénéficiaire'].isin(dict_confort.keys())].copy()
-                if not df_confort.empty:
-                    df_confort.insert(0, 'SIREN', df_confort['Bénéficiaire'].map(dict_confort))
-
-            df_cdc = pd.DataFrame()
-            if 'Bénéficiaire' in df_source.columns:
+                if not df_confort.empty: df_confort.insert(0, 'SIREN', df_confort['Bénéficiaire'].map(dict_confort))
+                
                 df_cdc = df_source[df_source['Bénéficiaire'].isin(dict_cdc.keys())].copy()
-                if not df_cdc.empty:
-                    df_cdc.insert(0, 'SIREN', df_cdc['Bénéficiaire'].map(dict_cdc))
+                if not df_cdc.empty: df_cdc.insert(0, 'SIREN', df_cdc['Bénéficiaire'].map(dict_cdc))
 
             # --- LISTE À EXPORTER ---
             df_export = df_source.copy()
-            
-            # 1. Retrait Confort & CDC
             if 'Numéro dossier' in df_export.columns:
-                if not df_confort.empty:
-                    dossiers_confort = df_confort['Numéro dossier'].dropna().unique()
-                    df_export = df_export[~df_export['Numéro dossier'].isin(dossiers_confort)]
-                if not df_cdc.empty:
-                    dossiers_cdc = df_cdc['Numéro dossier'].dropna().unique()
-                    df_export = df_export[~df_export['Numéro dossier'].isin(dossiers_cdc)]
+                if not df_confort.empty: df_export = df_export[~df_export['Numéro dossier'].isin(df_confort['Numéro dossier'])]
+                if not df_cdc.empty: df_export = df_export[~df_export['Numéro dossier'].isin(df_cdc['Numéro dossier'])]
 
-            # 2. Retrait & Création de l'Export ADMIN
+            # --- ADMIN ---
             df_admin = pd.DataFrame()
             mask_admin = pd.Series(False, index=df_export.index)
-            
             if 'Nom du document' in df_export.columns and mots_docs_admin:
                 for mot in mots_docs_admin:
                     mask_admin = mask_admin | df_export['Nom du document'].astype(str).str.contains(mot, case=False, na=False, regex=False)
-                    
             if 'Commentaire' in df_export.columns and mots_coms_admin:
                 for mot in mots_coms_admin:
                     mask_admin = mask_admin | df_export['Commentaire'].astype(str).str.contains(mot, case=False, na=False, regex=False)
-                    
             if mask_admin.any():
                 df_admin = df_export[mask_admin].copy()
-                df_export = df_export[~mask_admin] # On les retire de la liste principale
+                df_export = df_export[~mask_admin]
 
-            # --- TÉLÉCHARGEMENTS ---
-            # --- PRÉPARATION DES FICHIERS ET DU ZIP ---
+            # --- PRIORITÉS (DCR Uniquement) ---
+            df_prio, df_classique = pd.DataFrame(), df_export.copy()
+            
+            # On sépare les dossiers si une date limite a été choisie
+            if 'Date réception' in df_export.columns and st.session_state.get("date_prio"):
+                date_limite = pd.to_datetime(st.session_state.date_prio).date()
+                dates_reception = pd.to_datetime(df_export['Date réception']).dt.date
+                
+                mask_prio = dates_reception < date_limite
+                df_prio = df_export[mask_prio].copy()
+                df_classique = df_export[~mask_prio].copy()
+
+            # --- CRÉATION FICHIERS ---
             st.divider()
             date_export = datetime.now().strftime("%d-%m-%Y")
-            
-            # Dictionnaire pour stocker les fichiers générés
             fichiers_a_zipper = {}
 
-            # 1. Préparation DCR
-            nom_fichier_dcr = f"ODICEE-{date_export}-DCR_export_doc_com_non_vus.xlsx"
-            excel_data_dcr = generer_excel_formate(df_export, 'Liste à exporter')
-            fichiers_a_zipper[nom_fichier_dcr] = excel_data_dcr
+            # DCR (avec la fonction spéciale)
+            nom_dcr = f"ODICEE-{date_export}-DCR_export_doc_com_non_vus.xlsx"
+            excel_dcr = generer_excel_dcr(df_prio, df_classique, 'Liste à exporter')
+            fichiers_a_zipper[nom_dcr] = excel_dcr
             
-            # 2. Préparation Confort
+            # Autres
             if not df_confort.empty:
-                nom_fichier_confort = f"ODICEE-{date_export}-CONFORT_export_doc_com_non_vus.xlsx"
-                excel_data_confort = generer_excel_formate(df_confort, 'Confort')
-                fichiers_a_zipper[nom_fichier_confort] = excel_data_confort
+                nom_confort = f"ODICEE-{date_export}-CONFORT_export_doc_com_non_vus.xlsx"
+                excel_confort = generer_excel_formate(df_confort, 'Confort')
+                fichiers_a_zipper[nom_confort] = excel_confort
                 
-            # 3. Préparation CDC
             if not df_cdc.empty:
-                nom_fichier_cdc = f"ODICEE-{date_export}-CDC_export_doc_com_non_vus.xlsx"
-                excel_data_cdc = generer_excel_formate(df_cdc, 'CDC')
-                fichiers_a_zipper[nom_fichier_cdc] = excel_data_cdc
+                nom_cdc = f"ODICEE-{date_export}-CDC_export_doc_com_non_vus.xlsx"
+                excel_cdc = generer_excel_formate(df_cdc, 'CDC')
+                fichiers_a_zipper[nom_cdc] = excel_cdc
                 
-            # 4. Préparation ADMIN
             if not df_admin.empty:
-                nom_fichier_admin = f"ODICEE-{date_export}-ADMIN_export_doc_com_non_vus.xlsx"
-                excel_data_admin = generer_excel_formate(df_admin, 'ADMIN')
-                fichiers_a_zipper[nom_fichier_admin] = excel_data_admin
+                nom_admin = f"ODICEE-{date_export}-ADMIN_export_doc_com_non_vus.xlsx"
+                excel_admin = generer_excel_formate(df_admin, 'ADMIN')
+                fichiers_a_zipper[nom_admin] = excel_admin
 
-            # --- CRÉATION DE L'ARCHIVE ZIP ---
+            # --- ZIP & BOUTONS ---
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                for nom_fichier, data in fichiers_a_zipper.items():
-                    zf.writestr(nom_fichier, data)
+                for n, d in fichiers_a_zipper.items(): zf.writestr(n, d)
             
-            # --- AFFICHAGE DES BOUTONS ---
-            # Le gros bouton pour tout télécharger d'un coup
-            st.download_button(
-                label="📦 TÉLÉCHARGER TOUS LES EXPORTS (.zip)",
-                data=zip_buffer.getvalue(),
-                file_name=f"ODICEE-{date_export}-TOUS_LES_EXPORTS.zip",
-                use_container_width=True,
-                type="primary" # Met le bouton en couleur pour qu'il ressorte
-            )
-            
+            st.download_button("📦 TÉLÉCHARGER TOUS LES EXPORTS (.zip)", zip_buffer.getvalue(), f"ODICEE-{date_export}-TOUS_LES_EXPORTS.zip", use_container_width=True, type="primary")
             st.markdown("<p style='text-align: center; color: gray;'>Ou télécharger individuellement :</p>", unsafe_allow_html=True)
             
-            # Les boutons individuels
             c1, c2, c3, c4 = st.columns(4)
-            
             with c1:
                 st.subheader("📊 DCR")
-                st.text(f"{len(df_export)} lignes.")
-                st.download_button("📥 Télécharger DCR", excel_data_dcr, nom_fichier_dcr, use_container_width=True)
-                
+                st.text(f"{len(df_prio) + len(df_classique)} lignes.")
+                st.download_button("📥 Télécharger DCR", excel_dcr, nom_dcr, use_container_width=True)
             with c2:
                 st.subheader("🏢 Confort")
                 st.text(f"{len(df_confort)} lignes.")
-                if not df_confort.empty:
-                    st.download_button("📥 Télécharger Confort", excel_data_confort, nom_fichier_confort, use_container_width=True)
-                    
+                if not df_confort.empty: st.download_button("📥 Télécharger", excel_confort, nom_confort, use_container_width=True)
             with c3:
                 st.subheader("🏛️ CDC")
                 st.text(f"{len(df_cdc)} lignes.")
-                if not df_cdc.empty:
-                    st.download_button("📥 Télécharger CDC", excel_data_cdc, nom_fichier_cdc, use_container_width=True)
-                    
+                if not df_cdc.empty: st.download_button("📥 Télécharger", excel_cdc, nom_cdc, use_container_width=True)
             with c4:
                 st.subheader("🛡️ ADMIN")
                 st.text(f"{len(df_admin)} lignes.")
-                if not df_admin.empty:
-                    st.download_button("📥 Télécharger ADMIN", excel_data_admin, nom_fichier_admin, use_container_width=True)
+                if not df_admin.empty: st.download_button("📥 Télécharger", excel_admin, nom_admin, use_container_width=True)
 
+        except Exception as e:
+            st.error(f"Erreur lors de la génération de l'Excel : {e}")
         except Exception as e:
             st.error(f"Erreur lors de la génération de l'Excel : {e}")
