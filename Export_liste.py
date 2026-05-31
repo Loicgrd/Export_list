@@ -170,20 +170,16 @@ with tab_generateur:
             if 'Bénéficiaire' in df_source.columns:
                 df_confort = df_source[df_source['Bénéficiaire'].isin(dict_confort.keys())].copy()
                 if not df_confort.empty:
+                    # On insère juste le SIREN au début, et on garde TOUTES les autres colonnes intactes
                     df_confort.insert(0, 'SIREN', df_confort['Bénéficiaire'].map(dict_confort))
-                    df_confort.insert(1, 'BS Confort', df_confort['Bénéficiaire'])
-                    cols_attendues = ['SIREN', 'BS Confort', 'Date réception', 'Numéro dossier', 'Bénéficiaire', 'Stade']
-                    df_confort = df_confort[[c for c in cols_attendues if c in df_confort.columns]]
 
             # --- EXTRACTION CDC ---
             df_cdc = pd.DataFrame()
             if 'Bénéficiaire' in df_source.columns:
                 df_cdc = df_source[df_source['Bénéficiaire'].isin(dict_cdc.keys())].copy()
                 if not df_cdc.empty:
+                    # Pareil pour CDC
                     df_cdc.insert(0, 'SIREN', df_cdc['Bénéficiaire'].map(dict_cdc))
-                    df_cdc.insert(1, 'BS CDC', df_cdc['Bénéficiaire'])
-                    cols_attendues_cdc = ['SIREN', 'BS CDC', 'Date réception', 'Numéro dossier', 'Bénéficiaire', 'Stade']
-                    df_cdc = df_cdc[[c for c in cols_attendues_cdc if c in df_cdc.columns]]
 
             # --- LISTE À EXPORTER (Filtrée) ---
             df_export = df_source.copy()
