@@ -185,6 +185,25 @@ def afficher_tableau_synthese(df, titre):
                 else:
                     if row.name in top_5_dates: styles.append('background-color: #d4edda; color: #155724')
                     else: styles.append('background-color: #f8d7da; color: #721c24')
+            styles.append('min-width: 40px !important; max-width: 60px !important; text-align: center')
+            return styles
+
+        # Application du style avec des colonnes rétrécies
+        st.dataframe(
+            tableau_final.style.apply(coloriser_delais, axis=1), 
+            use_container_width=True
+        )
+    else:
+        st.info(f"**{titre}** : Base vide ou colonnes manquantes.")
+
+        def coloriser_delais(row):
+            styles = []
+            for col_name in row.index:
+                if row.name == 'Total' or col_name == 'Total':
+                    styles.append('background-color: #e6e6e6; font-weight: bold; color: black')
+                else:
+                    if row.name in top_5_dates: styles.append('background-color: #d4edda; color: #155724')
+                    else: styles.append('background-color: #f8d7da; color: #721c24')
             return styles
 
         st.dataframe(tableau_final.style.apply(coloriser_delais, axis=1), use_container_width=True)
@@ -297,7 +316,7 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
 # ONGLET 1 : GÉNÉRATEUR PRINCIPAL
 # ==========================================
 with tab_generateur:
-    uploaded_file = st.file_uploader("Importer le fichier Excel (Liste globale)", type=["xlsx"])
+    uploaded_file = st.file_uploader("Importer le fichier Excel (Export ODICEE)", type=["xlsx"])
 
     if uploaded_file is not None:
         try:
