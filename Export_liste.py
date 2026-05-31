@@ -201,6 +201,7 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
         current_row = 0
         max_col = len(df_classique.columns) if not df_classique.empty else (len(df_prio.columns) if not df_prio.empty else 1)
         
+        # 1. LISTE PRIORITAIRE
         if not df_prio.empty:
             worksheet.merge_range(current_row, 0, current_row, max_col - 1, "Liste Prioritaire", format_titre)
             current_row += 1
@@ -210,15 +211,28 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
             df_prio.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
             current_row += len(df_prio)
             
+        # 2. LISTE CLASSIQUE
         if not df_classique.empty or df_prio.empty:
             worksheet.merge_range(current_row, 0, current_row, max_col - 1, "Liste Classique", format_titre)
             current_row += 1
+            
+            # Mémorisation de la ligne où se trouvent les en-têtes pour appliquer le filtre plus tard
+            ligne_entete_classique = current_row 
+            
             for col_num, value in enumerate(df_classique.columns.values):
                 worksheet.write(current_row, col_num, value, format_header)
             current_row += 1
+            
             if not df_classique.empty:
                 df_classique.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
+                current_row += len(df_classique)
                 
+            # --- AJOUT DU FILTRE EXCEL ICI ---
+            if not df_classique.empty:
+                # Applique le filtre de la ligne des en-têtes jusqu'à la dernière ligne de données
+                worksheet.autofilter(ligne_entete_classique, 0, current_row - 1, max_col - 1)
+                
+        # Ajustement de la largeur des colonnes
         for i in range(max_col):
             worksheet.set_column(i, i, 16)
             
