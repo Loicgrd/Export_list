@@ -109,9 +109,18 @@ def afficher_gestion_base(sheet_name, df_gsheet):
     if not df_gsheet.empty:
         df_display = df_gsheet[[df_gsheet.columns[2], df_gsheet.columns[0], df_gsheet.columns[1]]]
         st.dataframe(df_display, use_container_width=True, hide_index=True)
-
-    if st.button("🗑️ Supprimer la sélection", type="primary", key=f"btn_del_{sheet_name}"):
-        st.rerun()
+        
+        st.subheader("🗑️ Supprimer")
+        a_supprimer = st.multiselect("Sélectionner les noms à supprimer :", options=df_gsheet.iloc[:, 0].tolist(), key=f"del_select_{sheet_name}")
+        
+        if st.button("🗑️ Supprimer la sélection", type="primary", key=f"btn_del_{sheet_name}"):
+            if a_supprimer:
+                df_updated = df_gsheet[~df_gsheet.iloc[:, 0].isin(a_supprimer)]
+                conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_updated)
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.warning("Veuillez sélectionner au moins un élément dans la liste.")
 
 def sauvegarder_admin(l_docs, l_coms):
     max_len = max(len(l_docs), len(l_coms))
@@ -185,6 +194,7 @@ def afficher_tableau_synthese(df, titre):
                 else:
                     if row.name in top_5_dates: styles.append('background-color: #d4edda; color: #155724')
                     else: styles.append('background-color: #f8d7da; color: #721c24')
+            styles.append('min-width: 40px !important; max-width: 60px !important; text-align: center')
             return styles
 
         st.dataframe(tableau_final.style.apply(coloriser_delais, axis=1), use_container_width=True)
@@ -297,7 +307,7 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
 # ONGLET 1 : GÉNÉRATEUR PRINCIPAL
 # ==========================================
 with tab_generateur:
-    uploaded_file = st.file_uploader("Importer le fichier Excel (Export ODICEE)", type=["xlsx"])
+    uploaded_file = st.file_uploader("Importer le fichier Excel (Liste globale)", type=["xlsx"])
 
     if uploaded_file is not None:
         try:
@@ -311,7 +321,6 @@ with tab_generateur:
             # --- ANALYSE ET DÉFINITION DE LA PRIORITÉ ---
             st.subheader("📅 Analyse et définition de la priorité (DCR)")
             
-            # --- TABLEAU GLOBAL (De retour en haut !) ---
             if st.toggle("📊 Afficher le tableau de synthèse global (Avant filtres)"):
                 afficher_tableau_synthese(df_source, "Synthèse Globale de l'import")
 
@@ -412,7 +421,6 @@ with tab_generateur:
 
             st.divider()
             
-            # Affichage dynamique des tableaux de synthèse pour chaque groupe (en bas)
             if st.toggle("📊 Afficher les tableaux de synthèse par export"):
                 t1, t2 = st.columns(2)
                 with t1:
@@ -424,5 +432,4 @@ with tab_generateur:
                     afficher_tableau_synthese(df_admin, "🛡️ Synthèse ADMIN")
 
         except Exception as e:
-            st.error(f"Erreur lors de la génération de l'Excel : {e}")
             st.error(f"Erreur lors de la génération de l'Excel : {e}")
