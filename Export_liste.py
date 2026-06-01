@@ -307,7 +307,7 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
 # ONGLET 1 : GÉNÉRATEUR PRINCIPAL
 # ==========================================
 with tab_generateur:
-    uploaded_file = st.file_uploader("Importer le fichier Excel (Liste globale)", type=["xlsx"])
+    uploaded_file = st.file_uploader("Importer le fichier Excel (Export ODICEE)", type=["xlsx"])
 
     if uploaded_file is not None:
         try:
