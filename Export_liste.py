@@ -192,7 +192,6 @@ def afficher_tableau_synthese(df, titre):
             css_base = 'min-width: 40px !important; max-width: 60px !important; text-align: center; '
             
             for col_name in row.index:
-                # On additionne le style de base avec la couleur correspondante
                 if row.name == 'Total' or col_name == 'Total':
                     styles.append(css_base + 'background-color: #e6e6e6; font-weight: bold; color: black')
                 else:
@@ -312,7 +311,7 @@ def generer_excel_dcr(df_prio, df_classique, nom_feuille):
 # ONGLET 1 : GÉNÉRATEUR PRINCIPAL
 # ==========================================
 with tab_generateur:
-    uploaded_file = st.file_uploader("Importer le fichier Excel (Export ODICEE)", type=["xlsx"])
+    uploaded_file = st.file_uploader("Importer le fichier Excel (Liste globale)", type=["xlsx"])
 
     if uploaded_file is not None:
         try:
@@ -426,14 +425,28 @@ with tab_generateur:
 
             st.divider()
             
-            if st.toggle("📊 Afficher les tableaux de synthèse par export"):
-                t1, t2 = st.columns(2)
-                with t1:
+            # --- NOUVEAU : BOUTONS INDÉPENDANTS POUR LES TABLEAUX ---
+            st.markdown("### 📊 Tableaux de synthèse par export")
+            
+            tog1, tog2, tog3, tog4 = st.columns(4)
+            show_dcr = tog1.toggle("📈 Synthèse DCR", value=False)
+            show_confort = tog2.toggle("🏢 Synthèse CONFORT", value=False)
+            show_cdc = tog3.toggle("🏛️ Synthèse CDC", value=False)
+            show_admin = tog4.toggle("🛡️ Synthèse ADMIN", value=False)
+            
+            t1, t2 = st.columns(2)
+            
+            with t1:
+                if show_dcr:
                     df_dcr_complet = pd.concat([df_prio, df_classique]) if not df_prio.empty or not df_classique.empty else pd.DataFrame()
                     afficher_tableau_synthese(df_dcr_complet, "📈 Synthèse DCR")
+                if show_cdc:
                     afficher_tableau_synthese(df_cdc, "🏛️ Synthèse CDC")
-                with t2:
+                    
+            with t2:
+                if show_confort:
                     afficher_tableau_synthese(df_confort, "🏢 Synthèse CONFORT")
+                if show_admin:
                     afficher_tableau_synthese(df_admin, "🛡️ Synthèse ADMIN")
 
         except Exception as e:
