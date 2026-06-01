@@ -188,8 +188,8 @@ def afficher_tableau_synthese(df, titre):
 
         def coloriser_delais(row):
             styles = []
-            # On stocke la largeur et le centrage dans une variable de base
-            css_base = 'min-width: 40px !important; max-width: 60px !important; text-align: center; '
+            # On conserve uniquement le centrage (la largeur redevient automatique)
+            css_base = 'text-align: center; '
             
             for col_name in row.index:
                 if row.name == 'Total' or col_name == 'Total':
@@ -201,6 +201,7 @@ def afficher_tableau_synthese(df, titre):
                         styles.append(css_base + 'background-color: #f8d7da; color: #721c24')
             return styles
 
+        # Le tableau s'affichera en pleine largeur (use_container_width=True)
         st.dataframe(tableau_final.style.apply(coloriser_delais, axis=1), use_container_width=True)
     else:
         st.info(f"**{titre}** : Base vide ou colonnes manquantes.")
@@ -425,29 +426,33 @@ with tab_generateur:
 
             st.divider()
             
-            # --- NOUVEAU : BOUTONS INDÉPENDANTS POUR LES TABLEAUX ---
+            # --- AFFICHAGE DES TABLEAUX INDÉPENDANTS (PLEINE LARGEUR) ---
             st.markdown("### 📊 Tableaux de synthèse par export")
             
+            # Les boutons de sélection restent alignés sur une seule ligne
             tog1, tog2, tog3, tog4 = st.columns(4)
             show_dcr = tog1.toggle("📈 Synthèse DCR", value=False)
             show_confort = tog2.toggle("🏢 Synthèse CONFORT", value=False)
             show_cdc = tog3.toggle("🏛️ Synthèse CDC", value=False)
             show_admin = tog4.toggle("🛡️ Synthèse ADMIN", value=False)
             
-            t1, t2 = st.columns(2)
-            
-            with t1:
-                if show_dcr:
-                    df_dcr_complet = pd.concat([df_prio, df_classique]) if not df_prio.empty or not df_classique.empty else pd.DataFrame()
-                    afficher_tableau_synthese(df_dcr_complet, "📈 Synthèse DCR")
-                if show_cdc:
-                    afficher_tableau_synthese(df_cdc, "🏛️ Synthèse CDC")
-                    
-            with t2:
-                if show_confort:
-                    afficher_tableau_synthese(df_confort, "🏢 Synthèse CONFORT")
-                if show_admin:
-                    afficher_tableau_synthese(df_admin, "🛡️ Synthèse ADMIN")
+            # L'affichage se fait les uns en dessous des autres en pleine largeur
+            if show_dcr:
+                df_dcr_complet = pd.concat([df_prio, df_classique]) if not df_prio.empty or not df_classique.empty else pd.DataFrame()
+                afficher_tableau_synthese(df_dcr_complet, "📈 Synthèse DCR")
+                st.write("") # Petit espace visuel
+                
+            if show_confort:
+                afficher_tableau_synthese(df_confort, "🏢 Synthèse CONFORT")
+                st.write("")
+                
+            if show_cdc:
+                afficher_tableau_synthese(df_cdc, "🏛️ Synthèse CDC")
+                st.write("")
+                
+            if show_admin:
+                afficher_tableau_synthese(df_admin, "🛡️ Synthèse ADMIN")
+                st.write("")
 
         except Exception as e:
             st.error(f"Erreur lors de la génération de l'Excel : {e}")
