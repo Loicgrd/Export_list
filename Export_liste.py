@@ -188,13 +188,18 @@ def afficher_tableau_synthese(df, titre):
 
         def coloriser_delais(row):
             styles = []
+            # On stocke la largeur et le centrage dans une variable de base
+            css_base = 'min-width: 40px !important; max-width: 60px !important; text-align: center; '
+            
             for col_name in row.index:
+                # On additionne le style de base avec la couleur correspondante
                 if row.name == 'Total' or col_name == 'Total':
-                    styles.append('background-color: #e6e6e6; font-weight: bold; color: black')
+                    styles.append(css_base + 'background-color: #e6e6e6; font-weight: bold; color: black')
                 else:
-                    if row.name in top_5_dates: styles.append('background-color: #d4edda; color: #155724')
-                    else: styles.append('background-color: #f8d7da; color: #721c24')
-            styles.append('min-width: 40px !important; max-width: 60px !important; text-align: center')
+                    if row.name in top_5_dates: 
+                        styles.append(css_base + 'background-color: #d4edda; color: #155724')
+                    else: 
+                        styles.append(css_base + 'background-color: #f8d7da; color: #721c24')
             return styles
 
         st.dataframe(tableau_final.style.apply(coloriser_delais, axis=1), use_container_width=True)
