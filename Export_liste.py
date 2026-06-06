@@ -1,458 +1,365 @@
 import streamlit as st
+import sys
+import os
+import datetime
+import re
 import pandas as pd
-import io
-import requests
-import zipfile
-from datetime import datetime
-import pytz
-from streamlit_gsheets import GSheetsConnection
-from xlsxwriter.utility import xl_col_to_name
+import json
+import tempfile
+from google import genai
+from google.genai import types
+from supabase import create_client
 
-st.set_page_config(page_title="Générateur d'Exports CEE", layout="wide")
+# Import de la logique locale
+from fonctions import parse_numero_complet, filtrer_et_trier_avis, nettoyer_modeles_ia
 
-# ==========================================
-# CONFIGURATION FUSEAU HORAIRE
-# ==========================================
-TZ_FRANCE = pytz.timezone('Europe/Paris')
+dossier_actuel = os.path.dirname(os.path.abspath(__file__))
+dossier_racine = os.path.abspath(os.path.join(dossier_actuel, ".."))
+if dossier_racine not in sys.path:
+    sys.path.append(dossier_racine)
 
-# ==========================================
-# CONNEXION AU GOOGLE SHEET
-# ==========================================
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1pkj6frncXmzUUVAClAWp63HY_UpQUahOCLz19w-UseI/edit?usp=sharing"
-conn = st.connection("gsheets", type=GSheetsConnection)
+from core.utils_vmc import PROMPT_VMC, PROMPT_VMC_LITE, format_debits_to_str, parse_debits_from_str
 
-@st.cache_data(ttl=10)
-def load_worksheet(sheet_name):
-    try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name)
-        if df.empty or len(df.columns) < 3:
-            df = pd.DataFrame(columns=["Nom", "SIREN", "Date d'ajout"])
-        if len(df.columns) < 3:
-            df["Date d'ajout"] = ""
-            
-        df = df.dropna(subset=[df.columns[0]])
-        df = df.iloc[:, :3]
+st.set_page_config(page_title="Contrôle CEE - VMC", page_icon="🌬️", layout="wide")
+
+# --- CONNEXIONS API ---
+@st.cache_resource
+def init_supabase():
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+
+@st.cache_resource
+def init_gemini():
+    return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+
+supabase = init_supabase()
+client_gemini = init_gemini()
+
+if 'prefill_data' not in st.session_state:
+    st.session_state['prefill_data'] = {}
+
+@st.cache_data(ttl=600)
+def fetch_all_atec():
+    reponse = supabase.table("referentiel_vmc").select("*").execute()
+    return reponse.data
+
+donnees_atec = fetch_all_atec()
+
+if not donnees_atec:
+    st.warning("Aucune donnée trouvée dans la base.")
+    st.stop()
+
+config_colonnes = {
+    "nom_modele": st.column_config.TextColumn("📦 Modèle", required=True),
+    "type_logement": st.column_config.SelectboxColumn("🏠 Logement", options=["Collectif", "Individuel", "Mixte"]),
+    "basse_pression": st.column_config.CheckboxColumn("⬇️ Basse Pression"),
+    "double_flux": st.column_config.CheckboxColumn("🔄 Double Flux"),
+    "debits_disponibles": st.column_config.TextColumn("💨 Débits"),
+    "puissance_hygro_a": st.column_config.TextColumn("⚡ WThC (Hygro A)"),
+    "puissance_hygro_b": st.column_config.TextColumn("⚡ WThC (Hygro B)")
+}
+
+tab_consult, tab_ajout = st.tabs(["🔍 Consultation & Modification", "➕ Ajouter un Avis"])
+
+# =====================================================================
+# ONGLET 1 : CONSULTATION ET MODIFICATION IN-PLACE
+# =====================================================================
+with tab_consult:
+    st.title("🌬️ Référentiel Avis Techniques VMC")
+
+    marques_disponibles = sorted(list(set([doc.get('distributeur', 'Inconnu') for doc in donnees_atec if doc.get('distributeur')])))
+
+    with st.form("formulaire_recherche"):
+        st.markdown("### 🔍 Critères de recherche")
+        col1, col2, col3 = st.columns(3)
+        with col1: filtre_marque = st.selectbox("🏭 Marque / Distributeur", ["Toutes"] + marques_disponibles)
+        with col2: filtre_texte = st.text_input("📦 Modèle ou N° d'Avis", "")
+        with col3: filtre_date = st.date_input("📅 Date d'engagement", value=None, format="DD/MM/YYYY")
         
-        dict_siren = dict(zip(df.iloc[:, 0], df.iloc[:, 1].astype(str)))
-        return dict_siren, df
-    except Exception as e:
-        st.error(f"Erreur de lecture de la feuille '{sheet_name}' : {e}")
-        return {}, pd.DataFrame(columns=["Nom", "SIREN", "Date d'ajout"])
+        submit_search = st.form_submit_button("🚀 Rechercher", use_container_width=True)
 
-@st.cache_data(ttl=10)
-def load_admin():
-    try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="ADMIN")
-        if df.empty:
-            return [], []
-            
-        mots_docs = [str(x).strip() for x in df.get("Nom du document", pd.Series()).dropna() if str(x).strip() and str(x).strip().lower() != 'nan']
-        mots_coms = [str(x).strip() for x in df.get("Commentaire", pd.Series()).dropna() if str(x).strip() and str(x).strip().lower() != 'nan']
-        
-        return mots_docs, mots_coms
-    except Exception as e:
-        st.error(f"Erreur de lecture de la feuille 'ADMIN' : {e}")
-        return [], []
-
-dict_confort, df_confort_gsheet = load_worksheet("Confort")
-dict_cdc, df_cdc_gsheet = load_worksheet("CDC")
-mots_docs_admin, mots_coms_admin = load_admin()
-
-st.title("Générateur d'Exports CEE")
-
-tab_generateur, tab_confort, tab_cdc, tab_admin = st.tabs([
-    "📊 Générateur", "⚙️ Base Confort", "⚙️ Base CDC", "🛡️ Filtres ADMIN"
-])
-
-# ==========================================
-# FONCTIONS UTILITAIRES
-# ==========================================
-def afficher_gestion_base(sheet_name, df_gsheet):
-    st.header(f"Base de données '{sheet_name}'")
-    state_recherche = f"recherche_{sheet_name}"
-    state_trouves = f"trouves_{sheet_name}"
-    if state_recherche not in st.session_state:
-        st.session_state[state_recherche] = False
-        st.session_state[state_trouves] = []
-    
-    st.subheader("➕ Ajouter plusieurs bailleurs (par SIREN)")
-    liste_sirens_brut = st.text_area(f"Collez vos SIREN ici :", key=f"input_siren_{sheet_name}")
-    
-    if st.button("🔍 Rechercher", key=f"btn_search_{sheet_name}"):
-        sirens = [s.strip() for s in liste_sirens_brut.replace('\n', ',').split(',') if s.strip()]
-        trouves = []
-        with st.spinner("Recherche..."):
-            for s in sirens:
-                resp = requests.get(f"https://recherche-entreprises.api.gouv.fr/search?q={s}")
-                if resp.status_code == 200 and resp.json().get("results"):
-                    res = resp.json()["results"][0]
-                    trouves.append({"Nom": res.get('sigle') or res.get('nom_raison_sociale'), "SIREN": res.get('siren')})
-        st.session_state[state_trouves] = trouves
-        st.session_state[state_recherche] = True
-
-    if st.session_state[state_recherche]:
-        if st.session_state[state_trouves]:
-            st.success(f"✅ {len(st.session_state[state_trouves])} trouvés !")
-            st.dataframe(pd.DataFrame(st.session_state[state_trouves]), hide_index=True)
-            if st.button("✅ Confirmer l'ajout", key=f"btn_conf_{sheet_name}", type="primary"):
-                date_jour = datetime.now(TZ_FRANCE).strftime("%d/%m/%Y")
-                nom_col, siren_col, date_col = df_gsheet.columns[0], df_gsheet.columns[1], df_gsheet.columns[2]
-                nouveaux = [{nom_col: b['Nom'], siren_col: b['SIREN'], date_col: date_jour} for b in st.session_state[state_trouves]]
-                df_updated = pd.concat([df_gsheet, pd.DataFrame(nouveaux)], ignore_index=True)
-                conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_updated)
-                st.session_state[state_recherche] = False
-                st.cache_data.clear()
-                st.rerun()
-    
     st.divider()
-    st.subheader("📋 Liste actuelle")
-    if not df_gsheet.empty:
-        df_display = df_gsheet[[df_gsheet.columns[2], df_gsheet.columns[0], df_gsheet.columns[1]]]
-        st.dataframe(df_display, use_container_width=True, hide_index=True)
-        
-        st.subheader("🗑️ Supprimer")
-        a_supprimer = st.multiselect("Sélectionner les noms à supprimer :", options=df_gsheet.iloc[:, 0].tolist(), key=f"del_select_{sheet_name}")
-        
-        if st.button("🗑️ Supprimer la sélection", type="primary", key=f"btn_del_{sheet_name}"):
-            if a_supprimer:
-                df_updated = df_gsheet[~df_gsheet.iloc[:, 0].isin(a_supprimer)]
-                conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_updated)
-                st.cache_data.clear()
-                st.rerun()
-            else:
-                st.warning("Veuillez sélectionner au moins un élément dans la liste.")
 
-def sauvegarder_admin(l_docs, l_coms):
-    max_len = max(len(l_docs), len(l_coms))
-    df_new = pd.DataFrame({
-        "Nom du document": l_docs + [""] * (max_len - len(l_docs)),
-        "Commentaire": l_coms + [""] * (max_len - len(l_coms))
-    })
-    conn.update(spreadsheet=SPREADSHEET_URL, worksheet="ADMIN", data=df_new)
-    st.cache_data.clear()
-    st.rerun()
-
-with tab_confort: afficher_gestion_base("Confort", df_confort_gsheet)
-with tab_cdc: afficher_gestion_base("CDC", df_cdc_gsheet)
-with tab_admin:
-    st.header("🛠️ Mots-clés pour le tri automatique ADMIN")
-    col_d, col_c = st.columns(2)
-    with col_d:
-        st.subheader("📄 Colonne 'Nom du document'")
-        nouveau_doc = st.text_input("Ajouter un mot-clé (ex: Visa) :")
-        if st.button("➕ Ajouter", key="add_doc") and nouveau_doc:
-            if nouveau_doc not in mots_docs_admin: sauvegarder_admin(mots_docs_admin + [nouveau_doc], mots_coms_admin)
-        if mots_docs_admin:
-            a_suppr_doc = st.multiselect("Supprimer :", mots_docs_admin, key="suppr_doc")
-            if st.button("🗑️ Enlever", key="btn_suppr_doc") and a_suppr_doc:
-                sauvegarder_admin([m for m in mots_docs_admin if m not in a_suppr_doc], mots_coms_admin)
-            st.dataframe(pd.DataFrame(mots_docs_admin, columns=["Mots-clés (Documents)"]), hide_index=True, use_container_width=True)
-
-    with col_c:
-        st.subheader("💬 Colonne 'Commentaire'")
-        nouveau_com = st.text_input("Ajouter un mot-clé (ex: Abandon) :")
-        if st.button("➕ Ajouter", key="add_com") and nouveau_com:
-            if nouveau_com not in mots_coms_admin: sauvegarder_admin(mots_docs_admin, mots_coms_admin + [nouveau_com])
-        if mots_coms_admin:
-            a_suppr_com = st.multiselect("Supprimer :", mots_coms_admin, key="suppr_com")
-            if st.button("🗑️ Enlever", key="btn_suppr_com") and a_suppr_com:
-                sauvegarder_admin(mots_docs_admin, [m for m in mots_coms_admin if m not in a_suppr_com])
-            st.dataframe(pd.DataFrame(mots_coms_admin, columns=["Mots-clés (Commentaires)"]), hide_index=True, use_container_width=True)
-
-# ==========================================
-# GÉNÉRATEURS EXCEL ET TABLEAUX
-# ==========================================
-def afficher_tableau_synthese(df, titre):
-    if not df.empty and 'Date réception' in df.columns and 'DCR' in df.columns:
-        df_synth = df.dropna(subset=['Date réception']).copy()
-        if df_synth.empty:
-            st.info(f"Aucune donnée valide pour {titre}.")
-            return
-            
-        st.markdown(f"**{titre}**")
-        df_synth['Date réception'] = pd.to_datetime(df_synth['Date réception']).dt.date
-        df_synth['DCR'] = df_synth['DCR'].fillna('Non renseigné')
-        
-        tableau = pd.crosstab(index=df_synth['Date réception'], columns=df_synth['DCR'], margins=True, margins_name='Total')
-        tableau_dates = tableau.drop('Total').sort_index(ascending=True)
-        tableau_final = pd.concat([tableau_dates, tableau.loc[['Total']]])
-        
-        index_formate = []
-        for idx in tableau_final.index:
-            if isinstance(idx, str): index_formate.append(idx)
-            else: index_formate.append(idx.strftime('%d/%m/%Y'))
-        tableau_final.index = index_formate
-
-        dates_sans_total = [d for d in tableau_final.index if d != 'Total']
-        top_5_dates = dates_sans_total[-5:]
-
-        def coloriser_delais(row):
-            styles = []
-            # On conserve uniquement le centrage (la largeur redevient automatique)
-            css_base = 'text-align: center; '
-            
-            for col_name in row.index:
-                if row.name == 'Total' or col_name == 'Total':
-                    styles.append(css_base + 'background-color: #e6e6e6; font-weight: bold; color: black')
-                else:
-                    if row.name in top_5_dates: 
-                        styles.append(css_base + 'background-color: #d4edda; color: #155724')
-                    else: 
-                        styles.append(css_base + 'background-color: #f8d7da; color: #721c24')
-            return styles
-
-        # Le tableau s'affichera en pleine largeur (use_container_width=True)
-        st.dataframe(tableau_final.style.apply(coloriser_delais, axis=1), use_container_width=True)
+    if not submit_search and not st.session_state.get('recherche_active', False):
+        st.info("👈 Veuillez définir vos critères et cliquer sur **Rechercher** pour afficher les résultats.")
     else:
-        st.info(f"**{titre}** : Base vide ou colonnes manquantes.")
+        st.session_state['recherche_active'] = True
+        
+        # APPEL DE LA FONCTION EXTERNALISÉE
+        resultats_finaux = filtrer_et_trier_avis(donnees_atec, filtre_marque, filtre_texte, filtre_date)
 
-def generer_excel_formate(df, nom_feuille):
-    if not df.empty and 'Initiales' not in df.columns:
-        df.insert(0, 'Initiales', '')
-
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
-        df.to_excel(writer, index=False, sheet_name=nom_feuille)
-        worksheet = writer.sheets[nom_feuille]
-        (max_row, max_col) = df.shape
-
-        if max_col > 0:
-            worksheet.autofilter(0, 0, max_row, max_col - 1)
-            worksheet.freeze_panes(1, 0)
+        if not resultats_finaux:
+            st.info("Aucun Avis Technique ne correspond à ces critères.")
+        else:
+            st.caption(f"**{len(resultats_finaux)} résultat(s) trouvé(s)**")
             
-            total_lignes = max_row + 1
-            
-            dossier_col_letter = None
-            if 'Numéro dossier' in df.columns:
-                dossier_col_letter = xl_col_to_name(df.columns.get_loc('Numéro dossier'))
+            for doc in resultats_finaux:
+                revision = doc.get('indice_revision') or 'V1'
+                full_atec = f"{doc.get('numero_atec', 'Inconnu')}_{revision}"
+
+                modeles_bruts = doc.get('modeles') or []
+                if isinstance(modeles_bruts, list):
+                    if filtre_texte and filtre_texte.lower() not in str(doc.get('numero_atec', '')).lower() and filtre_texte.lower() not in str(doc.get('distributeur', '')).lower():
+                        modeles_a_afficher = [m for m in modeles_bruts if filtre_texte.lower() in str(m.get('nom_modele', '')).lower()]
+                    else: modeles_a_afficher = modeles_bruts
+                else: modeles_a_afficher = []
+
+                deb_str = doc.get('debut_validite', 'Inconnue')
+                try: deb_str = datetime.datetime.strptime(deb_str, "%Y-%m-%d").date().strftime("%d/%m/%Y")
+                except: pass
+                try: fin_str = datetime.datetime.strptime(doc.get('fin_validite', ''), "%Y-%m-%d").date().strftime("%d/%m/%Y")
+                except: fin_str = "Inconnue"
+
+                is_expanded = doc.get('_est_version_recente', False)
+                badge = "🟢 Version Récente" if doc.get('_est_version_recente') else "🕰️ Historique"
                 
-            fmt_en_cours = writer.book.add_format({'bg_color': '#FFE699', 'font_color': '#595959'})
+                titre_bandeau = f"🏭 {doc.get('distributeur', doc.get('titulaire', 'Inconnu'))}  |  📄 {full_atec}  |  📅 {deb_str} ➡️ {fin_str}  |  {badge}"
+
+                with st.expander(titre_bandeau, expanded=is_expanded):
+                    mode_edition = st.toggle("✏️ Éditer cet Avis", key=f"toggle_{doc['id']}")
+                    
+                    if not mode_edition:
+                        col_ref, col_lien = st.columns([3, 1])
+                        with col_ref: st.code(full_atec, language=None)
+                        with col_lien:
+                            if doc.get('url_batipedia'): st.link_button("📥 Ouvrir PDF", doc['url_batipedia'], use_container_width=True)
+                        
+                        if modeles_a_afficher:
+                            st.markdown("**Modèles éligibles :**")
+                            modeles_groupes = {}
+                            for m in modeles_a_afficher:
+                                nom_brut = m.get('nom_modele', 'Inconnu').strip()
+                                match = re.search(r"^(.*?)\s+(\d+(?:\s*[a-zA-Z]+)?)$", nom_brut)
+                                if match: nom_base, debit_extrait = match.group(1).strip(), match.group(2).strip()
+                                else: nom_base, debit_extrait = nom_brut, None
+
+                                if nom_base not in modeles_groupes:
+                                    modeles_groupes[nom_base] = {
+                                        'nom_modele': nom_base, 'type_logement': m.get('type_logement', 'N/A'), 
+                                        'basse_pression': False, 'double_flux': False, 'debits': set(),
+                                        'pw_a': set(), 'pw_b': set()
+                                    }
+                                
+                                if m.get('basse_pression'): modeles_groupes[nom_base]['basse_pression'] = True
+                                if m.get('double_flux'): modeles_groupes[nom_base]['double_flux'] = True
+                                if debit_extrait: modeles_groupes[nom_base]['debits'].add(debit_extrait)
+                                if m.get('debits_disponibles'): modeles_groupes[nom_base]['debits'].update(m.get('debits_disponibles'))
+                                if m.get('puissance_hygro_a'): modeles_groupes[nom_base]['pw_a'].add(str(m['puissance_hygro_a']))
+                                if m.get('puissance_hygro_b'): modeles_groupes[nom_base]['pw_b'].add(str(m['puissance_hygro_b']))
+
+                            lignes_modeles = []
+                            for m in modeles_groupes.values():
+                                bp = " | BP: ✅" if m['basse_pression'] else ""
+                                df = " | DF: 🔄" if m['double_flux'] else ""
+                                type_log = f" ({m['type_logement']})"
+                                def tri_numerique(val):
+                                    nombres = re.findall(r'\d+', val)
+                                    return int(nombres[0]) if nombres else 0
+                                liste_debits = sorted(list(m['debits']), key=tri_numerique)
+                                debits_str = f" ({', '.join(liste_debits)})" if liste_debits else ""
+                                pw_a_str = f" | W-Th-C (A): {', '.join(m['pw_a'])}" if m['pw_a'] else ""
+                                pw_b_str = f" | W-Th-C (B): {', '.join(m['pw_b'])}" if m['pw_b'] else ""
+                                lignes_modeles.append(f"- **{m['nom_modele']}**{debits_str} {type_log}{bp}{df}{pw_a_str}{pw_b_str}")
+                            
+                            st.markdown("\n".join(lignes_modeles))
+                    
+                    else:
+                        st.info("Vous modifiez actuellement cet Avis Technique.")
+                        with st.form(f"form_edit_{doc['id']}"):
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                mod_full_num = st.text_input("Numéro d'Avis complet (ex: 14.5/17-2273_V2)", value=full_atec)
+                                mod_tit = st.text_input("Titulaire", value=doc.get('titulaire', ''))
+                            with c2:
+                                mod_dist = st.text_input("Distributeur", value=doc.get('distributeur', ''))
+                                try: val_deb = datetime.datetime.strptime(doc.get('debut_validite', ''), "%Y-%m-%d").date()
+                                except: val_deb = None
+                                try: val_fin = datetime.datetime.strptime(doc.get('fin_validite', ''), "%Y-%m-%d").date()
+                                except: val_fin = None
+                                mod_deb = st.date_input("Début de validité", value=val_deb, format="DD/MM/YYYY")
+                                mod_fin = st.date_input("Fin de validité", value=val_fin, format="DD/MM/YYYY")
+                                
+                            mod_url = st.text_input("Lien URL Batipedia", value=doc.get('url_batipedia', ''))
+                            
+                            st.markdown("**Modèles associés**")
+                            lignes_df = []
+                            for m in doc.get('modeles', []):
+                                log_db = m.get('type_logement', 'Collectif')
+                                if log_db not in ["Collectif", "Individuel", "Mixte"]: log_db = "Collectif"
+                                lignes_df.append({
+                                    "nom_modele": m.get('nom_modele', ''), "type_logement": log_db, 
+                                    "basse_pression": bool(m.get('basse_pression', False)), "double_flux": bool(m.get('double_flux', False)),
+                                    "debits_disponibles": format_debits_to_str(m.get('debits_disponibles', [])),
+                                    "puissance_hygro_a": str(m.get('puissance_hygro_a', '') or ''), "puissance_hygro_b": str(m.get('puissance_hygro_b', '') or '')
+                                })
+                            
+                            if not lignes_df: lignes_df.append({"nom_modele": "", "type_logement": "Collectif", "basse_pression": False, "double_flux": False, "debits_disponibles": "", "puissance_hygro_a": "", "puissance_hygro_b": ""})
+                                
+                            df_edit = pd.DataFrame(lignes_df)
+                            edited_df_mod = st.data_editor(df_edit, num_rows="dynamic", column_config=config_colonnes, hide_index=True, use_container_width=True, key=f"grid_{doc['id']}")
+
+                            if st.form_submit_button("💾 Sauvegarder les modifications", type="primary"):
+                                mod_num, mod_rev = parse_numero_complet(mod_full_num)
+                                
+                                modeles_json_mod = []
+                                for _, row in edited_df_mod.iterrows():
+                                    if row['nom_modele'].strip():
+                                        modeles_json_mod.append({
+                                            "nom_modele": row['nom_modele'], "type_logement": row['type_logement'], 
+                                            "basse_pression": bool(row['basse_pression']), "double_flux": bool(row['double_flux']),
+                                            "debits_disponibles": parse_debits_from_str(row['debits_disponibles']),
+                                            "puissance_hygro_a": str(row['puissance_hygro_a']).strip() if row['puissance_hygro_a'] else None,
+                                            "puissance_hygro_b": str(row['puissance_hygro_b']).strip() if row['puissance_hygro_b'] else None
+                                        })
+                                
+                                doc_update = {
+                                    "numero_atec": mod_num, "indice_revision": mod_rev, "titulaire": mod_tit, "distributeur": mod_dist,
+                                    "debut_validite": mod_deb.strftime("%Y-%m-%d") if mod_deb else None, "fin_validite": mod_fin.strftime("%Y-%m-%d") if mod_fin else None,
+                                    "url_batipedia": mod_url, "modeles": modeles_json_mod
+                                }
+                                
+                                supabase.table("referentiel_vmc").update(doc_update).eq("id", doc['id']).execute()
+                                st.success("Modifications sauvegardées avec succès !")
+                                fetch_all_atec.clear()
+                                st.rerun()
+
+# =====================================================================
+# ONGLET 2 : AJOUTER UN NOUVEL AVIS MANUELLEMENT (AVEC IA)
+# =====================================================================
+with tab_ajout:
+    st.header("➕ Ajouter un nouvel Avis Technique")
+    st.info("Importez le PDF de l'Avis Technique. Gemini va le lire et pré-remplir tous les champs ci-dessous pour vous !")
+    
+    fichier_pdf = st.file_uploader("Glissez le PDF ici", type=["pdf"])
+    
+    if fichier_pdf:
+        if st.button("✨ Analyser et Pré-remplir", type="primary", use_container_width=True):
+            with st.spinner("Analyse du document en cours (environ 10 secondes)..."):
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                        tmp_file.write(fichier_pdf.getvalue())
+                        tmp_path = tmp_file.name
+
+                    fichier_upload = client_gemini.files.upload(file=tmp_path)
+                    
+                    try:
+                        reponse_ia = client_gemini.models.generate_content(
+                            model='gemini-3.5-flash', 
+                            contents=[fichier_upload, PROMPT_VMC],
+                            config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.0)
+                        )
+                    except Exception as e:
+                        erreur_str = str(e).lower()
+                        if "429" in erreur_str or "503" in erreur_str or "quota" in erreur_str or "unavailable" in erreur_str:
+                            st.warning("⚠️ Modèle principal indisponible. Passage en mode Lite (rapide). **Les puissances électriques ne seront pas extraites** et devront être saisies manuellement.")
+                            reponse_ia = client_gemini.models.generate_content(
+                                model='gemini-3.1-flash-lite', 
+                                contents=[fichier_upload, PROMPT_VMC_LITE],
+                                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.0)
+                            )
+                        else:
+                            raise e
+                    
+                    client_gemini.files.delete(name=fichier_upload.name)
+                    os.remove(tmp_path)
+                    
+                    raw_text = reponse_ia.text.replace("```json", "").replace("```", "").strip()
+                    if "{" in raw_text and "}" in raw_text:
+                        raw_text = raw_text[raw_text.find("{"):raw_text.rfind("}") + 1]
+                    
+                    donnees_extraites = json.loads(raw_text)
+                    
+                    # APPEL DE LA FONCTION DE NETTOYAGE EXTERNALISÉE
+                    donnees_extraites = nettoyer_modeles_ia(donnees_extraites)
+                    
+                    if donnees_extraites.get("est_vmc") is False:
+                        st.error("⚠️ L'IA a détecté que ce document ne concerne pas une VMC.")
+                    else:
+                        st.success("Analyse réussie ! Les champs ont été pré-remplis.")
+                        st.session_state['prefill_data'] = donnees_extraites
+                        st.rerun()
+
+                except Exception as e:
+                    st.error(f"Erreur lors de l'analyse : {e}")
+
+    st.divider()
+
+    prefill = st.session_state.get('prefill_data', {})
+    prefill_num = prefill.get("numero_atec", "")
+    if prefill_num and prefill.get("indice_revision") and "_" not in prefill_num:
+        prefill_num = f"{prefill_num}_{prefill['indice_revision']}"
+    
+    with st.form("form_add_atec"):
+        col1, col2 = st.columns(2)
+        with col1:
+            in_full_num = st.text_input("Numéro d'Avis complet (ex: 14.5/17-2273_V2)", value=prefill_num)
+            in_tit = st.text_input("Titulaire (ex: ALDES)", value=prefill.get("titulaire", ""))
+        with col2:
+            in_dist = st.text_input("Distributeur (Marque commerciale)", value=prefill.get("distributeur", ""))
+            try: def_deb = datetime.datetime.strptime(prefill.get('debut_validite', ''), "%Y-%m-%d").date()
+            except: def_deb = None
+            try: def_fin = datetime.datetime.strptime(prefill.get('fin_validite', ''), "%Y-%m-%d").date()
+            except: def_fin = None
             
-            if dossier_col_letter:
-                formula = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes}, ${dossier_col_letter}2, $A$1:$A${total_lignes}, "<>")>0'
+            in_deb = st.date_input("Début de validité", value=def_deb, format="DD/MM/YYYY")
+            in_fin = st.date_input("Fin de validité", value=def_fin, format="DD/MM/YYYY")
+        
+        in_url = st.text_input("Lien URL Batipedia (Optionnel)")
+        
+        st.markdown("**Caissons / Modèles**")
+        
+        lignes_df_new = []
+        if prefill.get("modeles"):
+            for m in prefill["modeles"]:
+                log_db = m.get('type_logement', 'Collectif')
+                if log_db not in ["Collectif", "Individuel", "Mixte"]: log_db = "Collectif"
+                lignes_df_new.append({
+                    "nom_modele": m.get('nom_modele', ''), "type_logement": log_db,
+                    "basse_pression": bool(m.get('basse_pression', False)), "double_flux": bool(m.get('double_flux', False)),
+                    "debits_disponibles": format_debits_to_str(m.get('debits_disponibles', [])),
+                    "puissance_hygro_a": str(m.get('puissance_hygro_a', '') or ''), "puissance_hygro_b": str(m.get('puissance_hygro_b', '') or '')
+                })
+        
+        if not lignes_df_new:
+            lignes_df_new.append({"nom_modele": "", "type_logement": "Collectif", "basse_pression": False, "double_flux": False, "debits_disponibles": "", "puissance_hygro_a": "", "puissance_hygro_b": ""})
+            
+        df_new = pd.DataFrame(lignes_df_new)
+        edited_df_new = st.data_editor(df_new, num_rows="dynamic", column_config=config_colonnes, hide_index=True, use_container_width=True)
+
+        if st.form_submit_button("✅ Enregistrer le nouvel Avis", type="primary"):
+            if not in_full_num or not in_tit:
+                st.error("⚠️ Le Numéro d'Avis et le Titulaire sont obligatoires.")
             else:
-                formula = '=$A2<>""'
-                
-            worksheet.conditional_format(1, 0, max_row, max_col - 1, {'type': 'formula', 'criteria': formula, 'format': fmt_en_cours})
+                try:
+                    in_num, in_rev = parse_numero_complet(in_full_num)
+                    
+                    modeles_json_new = []
+                    for _, row in edited_df_new.iterrows():
+                        if row['nom_modele'].strip():
+                            modeles_json_new.append({
+                                "nom_modele": row['nom_modele'], "type_logement": row['type_logement'],
+                                "basse_pression": bool(row['basse_pression']), "double_flux": bool(row['double_flux']),
+                                "debits_disponibles": parse_debits_from_str(row['debits_disponibles']),
+                                "puissance_hygro_a": str(row['puissance_hygro_a']).strip() if row['puissance_hygro_a'] else None,
+                                "puissance_hygro_b": str(row['puissance_hygro_b']).strip() if row['puissance_hygro_b'] else None
+                            })
+                    
+                    nouveau_doc = {
+                        "numero_atec": in_num, "indice_revision": in_rev,
+                        "titulaire": in_tit, "distributeur": in_dist if in_dist else in_tit,
+                        "debut_validite": in_deb.strftime("%Y-%m-%d") if in_deb else None,
+                        "fin_validite": in_fin.strftime("%Y-%m-%d") if in_fin else None,
+                        "url_batipedia": in_url, "modeles": modeles_json_new
+                    }
+                    
+                    supabase.table("referentiel_vmc").insert(nouveau_doc).execute()
+                    st.success(f"L'Avis {in_num}_{in_rev} a été ajouté avec succès !")
+                    
+                    fetch_all_atec.clear()
+                    st.session_state['prefill_data'] = {}
+                    st.rerun()
 
-            for i in range(max_col): worksheet.set_column(i, i, 16) 
-    return buffer.getvalue()
-
-def generer_excel_dcr(df_prio, df_classique, nom_feuille):
-    if not df_prio.empty and 'Initiales' not in df_prio.columns:
-        df_prio.insert(0, 'Initiales', '')
-    if not df_classique.empty and 'Initiales' not in df_classique.columns:
-        df_classique.insert(0, 'Initiales', '')
-
-    dossier_col_letter = None
-    if not df_classique.empty and 'Numéro dossier' in df_classique.columns:
-        dossier_col_letter = xl_col_to_name(df_classique.columns.get_loc('Numéro dossier'))
-    elif not df_prio.empty and 'Numéro dossier' in df_prio.columns:
-        dossier_col_letter = xl_col_to_name(df_prio.columns.get_loc('Numéro dossier'))
-
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
-        workbook = writer.book
-        worksheet = workbook.add_worksheet(nom_feuille)
-        
-        fmt_rouge = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': 'red', 'align': 'center', 'valign': 'vcenter', 'font_size': 12})
-        fmt_bleu = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': '#3a75c4', 'align': 'center', 'valign': 'vcenter', 'font_size': 12})
-        fmt_header = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
-        fmt_en_cours = workbook.add_format({'bg_color': '#FFE699', 'font_color': '#595959'})
-        
-        current_row = 0
-        max_col = len(df_classique.columns) if not df_classique.empty else (len(df_prio.columns) if not df_prio.empty else 1)
-        
-        total_lignes_excel = len(df_prio) + len(df_classique) + 20 
-        
-        if not df_prio.empty:
-            worksheet.merge_range(current_row, 0, current_row, max_col - 1, "↓ /!\\ Liste prioritaire (à faire avant de passer sur une DCR) /!\\ ↓", fmt_rouge)
-            current_row += 1
-            for i, val in enumerate(df_prio.columns.values): worksheet.write(current_row, i, val, fmt_header)
-            current_row += 1
-            
-            start_prio = current_row
-            df_prio.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
-            end_prio = current_row + len(df_prio) - 1
-            
-            if dossier_col_letter:
-                formule_prio = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes_excel}, ${dossier_col_letter}{start_prio + 1}, $A$1:$A${total_lignes_excel}, "<>")>0'
-            else: formule_prio = f'=$A{start_prio + 1}<>""'
-            worksheet.conditional_format(start_prio, 0, end_prio, max_col - 1, {'type': 'formula', 'criteria': formule_prio, 'format': fmt_en_cours})
-            
-            current_row += len(df_prio)
-            worksheet.merge_range(current_row, 0, current_row, max_col - 1, "↑ /!\\ Liste prioritaire (à faire avant de passer sur une DCR) /!\\ ↑", fmt_rouge)
-            current_row += 1
-            
-        if not df_classique.empty or df_prio.empty:
-            worksheet.merge_range(current_row, 0, current_row, max_col - 1, "Puis basculer sur DCR (pensez à vérifier votre planning).", fmt_bleu)
-            current_row += 1
-            ligne_entete = current_row
-            for i, val in enumerate(df_classique.columns.values): worksheet.write(current_row, i, val, fmt_header)
-            current_row += 1
-            
-            if not df_classique.empty:
-                start_classique = current_row
-                df_classique.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
-                end_classique = current_row + len(df_classique) - 1
-                
-                if dossier_col_letter:
-                    formule_classique = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes_excel}, ${dossier_col_letter}{start_classique + 1}, $A$1:$A${total_lignes_excel}, "<>")>0'
-                else: formule_classique = f'=$A{start_classique + 1}<>""'
-                worksheet.conditional_format(start_classique, 0, end_classique, max_col - 1, {'type': 'formula', 'criteria': formule_classique, 'format': fmt_en_cours})
-                
-                worksheet.autofilter(ligne_entete, 0, end_classique, max_col - 1)
-                
-        for i in range(max_col): worksheet.set_column(i, i, 16)
-        
-    return buffer.getvalue()
-
-
-# ==========================================
-# ONGLET 1 : GÉNÉRATEUR PRINCIPAL
-# ==========================================
-with tab_generateur:
-    uploaded_file = st.file_uploader("Importer le fichier Excel (Liste globale)", type=["xlsx"])
-
-    if uploaded_file is not None:
-        try:
-            df_source = pd.read_excel(uploaded_file)
-            st.success(f"Fichier chargé ! ({len(df_source)} lignes)")
-
-            for col in df_source.columns:
-                if 'date' in str(col).lower():
-                    df_source[col] = pd.to_datetime(df_source[col], errors='coerce')
-
-            # --- ANALYSE ET DÉFINITION DE LA PRIORITÉ ---
-            st.subheader("📅 Analyse et définition de la priorité (DCR)")
-            
-            if st.toggle("📊 Afficher le tableau de synthèse global (Avant filtres)"):
-                afficher_tableau_synthese(df_source, "Synthèse Globale de l'import")
-
-            date_prio = st.date_input("Dossiers reçus JUSQU'À cette date (incluse) = Prioritaires :", value=None, format="DD/MM/YYYY")
-
-            # --- CONFORT & CDC ---
-            df_confort, df_cdc = pd.DataFrame(), pd.DataFrame()
-            if 'Bénéficiaire' in df_source.columns:
-                df_confort = df_source[df_source['Bénéficiaire'].isin(dict_confort.keys())].copy()
-                df_cdc = df_source[df_source['Bénéficiaire'].isin(dict_cdc.keys())].copy()
-
-            # --- LISTE À EXPORTER (Base) ---
-            df_export = df_source.copy()
-            if 'Numéro dossier' in df_export.columns:
-                if not df_confort.empty: df_export = df_export[~df_export['Numéro dossier'].isin(df_confort['Numéro dossier'])]
-                if not df_cdc.empty: df_export = df_export[~df_export['Numéro dossier'].isin(df_cdc['Numéro dossier'])]
-
-            # --- ADMIN ---
-            df_admin = pd.DataFrame()
-            mask_admin = pd.Series(False, index=df_export.index)
-            if 'Nom du document' in df_export.columns and mots_docs_admin:
-                for mot in mots_docs_admin: mask_admin = mask_admin | df_export['Nom du document'].astype(str).str.contains(mot, case=False, na=False, regex=False)
-            if 'Commentaire' in df_export.columns and mots_coms_admin:
-                for mot in mots_coms_admin: mask_admin = mask_admin | df_export['Commentaire'].astype(str).str.contains(mot, case=False, na=False, regex=False)
-            if mask_admin.any():
-                df_admin = df_export[mask_admin].copy()
-                df_export = df_export[~mask_admin]
-
-            # --- TRI GLOBAL DES BASES ---
-            def trier_df(df):
-                cols_tri = []
-                if 'Date réception' in df.columns: cols_tri.append('Date réception')
-                if 'Numéro dossier' in df.columns: cols_tri.append('Numéro dossier')
-                if cols_tri:
-                    return df.sort_values(by=cols_tri, na_position='last')
-                return df
-                
-            df_export = trier_df(df_export)
-            df_confort = trier_df(df_confort)
-            df_cdc = trier_df(df_cdc)
-            df_admin = trier_df(df_admin)
-
-            # --- SÉPARATION DCR (Prioritaire / Classique) ---
-            df_prio, df_classique = pd.DataFrame(), df_export.copy()
-            if 'Date réception' in df_export.columns and date_prio is not None:
-                dates_reception = pd.to_datetime(df_export['Date réception']).dt.date
-                mask_prio = dates_reception <= date_prio
-                df_prio = df_export[mask_prio].copy()
-                df_classique = df_export[~mask_prio].copy()
-
-            # --- CRÉATION FICHIERS ET ZIP ---
-            st.divider()
-            date_export = datetime.now(TZ_FRANCE).strftime("%d-%m-%Y")
-            fichiers_a_zipper = {}
-
-            nom_dcr = f"ODICEE-{date_export}-DCR_export_doc_com_non_vus.xlsx"
-            fichiers_a_zipper[nom_dcr] = generer_excel_dcr(df_prio, df_classique, 'Liste à exporter')
-            
-            if not df_confort.empty:
-                df_confort = df_confort.drop(columns=['SIREN'], errors='ignore')
-                nom_confort = f"ODICEE-{date_export}-CONFORT_export_doc_com_non_vus.xlsx"
-                fichiers_a_zipper[nom_confort] = generer_excel_formate(df_confort, 'Confort')
-                
-            if not df_cdc.empty:
-                df_cdc = df_cdc.drop(columns=['SIREN'], errors='ignore')
-                nom_cdc = f"ODICEE-{date_export}-CDC_export_doc_com_non_vus.xlsx"
-                fichiers_a_zipper[nom_cdc] = generer_excel_formate(df_cdc, 'CDC')
-                
-            if not df_admin.empty:
-                df_admin = df_admin.drop(columns=['SIREN'], errors='ignore')
-                nom_admin = f"ODICEE-{date_export}-ADMIN_export_doc_com_non_vus.xlsx"
-                fichiers_a_zipper[nom_admin] = generer_excel_formate(df_admin, 'ADMIN')
-
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                for n, d in fichiers_a_zipper.items(): zf.writestr(n, d)
-            
-            # --- AFFICHAGE BOUTONS ET SYNTHÈSES ---
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.subheader("📊 DCR")
-                st.text(f"{len(df_prio) + len(df_classique)} lignes.")
-                st.download_button("📥 Télécharger DCR", fichiers_a_zipper.get(nom_dcr, b''), nom_dcr, use_container_width=True)
-            with c2:
-                st.subheader("🏢 Confort")
-                st.text(f"{len(df_confort)} lignes.")
-                if not df_confort.empty: st.download_button("📥 Télécharger", fichiers_a_zipper.get(nom_confort, b''), nom_confort, use_container_width=True)
-            with c3:
-                st.subheader("🏛️ CDC")
-                st.text(f"{len(df_cdc)} lignes.")
-                if not df_cdc.empty: st.download_button("📥 Télécharger", fichiers_a_zipper.get(nom_cdc, b''), nom_cdc, use_container_width=True)
-            with c4:
-                st.subheader("🛡️ ADMIN")
-                st.text(f"{len(df_admin)} lignes.")
-                if not df_admin.empty: st.download_button("📥 Télécharger", fichiers_a_zipper.get(nom_admin, b''), nom_admin, use_container_width=True)
-                
-            st.download_button("📦 TÉLÉCHARGER TOUS LES EXPORTS (.zip)", zip_buffer.getvalue(), f"ODICEE-{date_export}-TOUS_LES_EXPORTS.zip", use_container_width=True, type="primary")
-
-            st.divider()
-            
-            # --- AFFICHAGE DES TABLEAUX INDÉPENDANTS (PLEINE LARGEUR) ---
-            st.markdown("### 📊 Tableaux de synthèse par export")
-            
-            # Les boutons de sélection restent alignés sur une seule ligne
-            tog1, tog2, tog3, tog4 = st.columns(4)
-            show_dcr = tog1.toggle("📈 Synthèse DCR", value=False)
-            show_confort = tog2.toggle("🏢 Synthèse CONFORT", value=False)
-            show_cdc = tog3.toggle("🏛️ Synthèse CDC", value=False)
-            show_admin = tog4.toggle("🛡️ Synthèse ADMIN", value=False)
-            
-            # L'affichage se fait les uns en dessous des autres en pleine largeur
-            if show_dcr:
-                df_dcr_complet = pd.concat([df_prio, df_classique]) if not df_prio.empty or not df_classique.empty else pd.DataFrame()
-                afficher_tableau_synthese(df_dcr_complet, "📈 Synthèse DCR")
-                st.write("") # Petit espace visuel
-                
-            if show_confort:
-                afficher_tableau_synthese(df_confort, "🏢 Synthèse CONFORT")
-                st.write("")
-                
-            if show_cdc:
-                afficher_tableau_synthese(df_cdc, "🏛️ Synthèse CDC")
-                st.write("")
-                
-            if show_admin:
-                afficher_tableau_synthese(df_admin, "🛡️ Synthèse ADMIN")
-                st.write("")
-
-        except Exception as e:
-            st.error(f"Erreur lors de la génération de l'Excel : {e}")
+                except Exception as e:
+                    if "23505" in str(e) or "duplicate key" in str(e):
+                        st.error(f"⚠️ L'Avis Technique **{in_num}** (Révision **{in_rev}**) existe déjà dans la base.")
+                    else:
+                        st.error(f"❌ Erreur inattendue : {e}")
