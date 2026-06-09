@@ -10,8 +10,8 @@ from fonctions import (
     afficher_gestion_base, 
     sauvegarder_admin, 
     afficher_tableau_synthese, 
-    ajouter_feuille_formatee,  # <-- Nouvelle fonction
-    ajouter_feuille_dcr,       # <-- Nouvelle fonction
+    ajouter_feuille_formatee, 
+    ajouter_feuille_dcr,       
     afficher_gestion_liste_bs
 )
 
@@ -58,13 +58,12 @@ def load_liste_bs():
 
 # --- Initialisation ---
 dict_confort, df_confort_gsheet = load_worksheet("Confort")
-dict_national, df_national_gsheet = load_worksheet("CDC") # L'onglet GSheet s'appelle encore CDC mais c'est le National
+dict_national, df_national_gsheet = load_worksheet("CDC") 
 mots_docs_admin, mots_coms_admin = load_admin()
 dict_bs_global, df_liste_bs_gsheet = load_liste_bs()
 
 st.title("Générateur d'Exports CEE")
 
-# ORDRE DES ONGLETS MODIFIÉ (Base BS ODICEE tout à droite)
 tab_generateur, tab_confort, tab_national, tab_admin, tab_liste_bs = st.tabs([
     "📊 Générateur", "⚙️ Base Confort", "⚙️ Base National", "🛡️ Filtres ADMIN", "🏢 Base BS ODICEE"
 ])
@@ -111,26 +110,23 @@ with tab_generateur:
             for col in df_source.columns:
                 if 'date' in str(col).lower(): df_source[col] = pd.to_datetime(df_source[col], errors='coerce')
 
+            st.markdown("### 📊 Synthèse Globale de l'import (Avant filtres)")
+            afficher_tableau_synthese(df_source, "Données brutes")
+            st.divider()
+
             st.subheader("📅 Analyse et définition de la priorité (DCR)")
-            
-            if st.toggle("📊 Afficher le tableau de synthèse global (Avant filtres)"):
-                afficher_tableau_synthese(df_source, "Synthèse Globale de l'import")
+            date_prio = st.date_input("Dossiers reçus JUSQU'À cette date (incluse) = Prioritaires par défaut :", value=None, format="DD/MM/YYYY")
 
-            date_prio = st.date_input("Dossiers reçus JUSQU'À cette date (incluse) = Prioritaires :", value=None, format="DD/MM/YYYY")
-
-            # 1. Isolement Confort et National
             df_confort, df_national = pd.DataFrame(), pd.DataFrame()
             if 'Bénéficiaire' in df_source.columns:
                 df_confort = df_source[df_source['Bénéficiaire'].isin(dict_confort.keys())].copy()
                 df_national = df_source[df_source['Bénéficiaire'].isin(dict_national.keys())].copy()
 
-            # 2. On retire Confort et National du flux principal
             df_export = df_source.copy()
             if 'Numéro dossier' in df_export.columns:
                 if not df_confort.empty: df_export = df_export[~df_export['Numéro dossier'].isin(df_confort['Numéro dossier'])]
                 if not df_national.empty: df_export = df_export[~df_export['Numéro dossier'].isin(df_national['Numéro dossier'])]
 
-            # 3. Application du filtre ADMIN
             df_admin = pd.DataFrame()
             df_admin_national = pd.DataFrame()
             df_admin_dcr = pd.DataFrame()
@@ -143,9 +139,8 @@ with tab_generateur:
             
             if mask_admin.any():
                 df_admin = df_export[mask_admin].copy()
-                df_export = df_export[~mask_admin] # On retire l'admin du flux DCR
+                df_export = df_export[~mask_admin] 
                 
-                # NOUVEAU : Séparation ADMIN National et ADMIN DCR
                 if 'Bénéficiaire' in df_admin.columns:
                     mask_admin_nat = df_admin['Bénéficiaire'].isin(dict_national.keys())
                     df_admin_national = df_admin[mask_admin_nat].copy()
@@ -153,7 +148,6 @@ with tab_generateur:
                 else:
                     df_admin_dcr = df_admin.copy()
 
-            # 4. Tri de toutes les tables
             def trier_df(df):
                 cols_tri = []
                 if 'Date réception' in df.columns: cols_tri.append('Date réception')
@@ -167,29 +161,84 @@ with tab_generateur:
             df_admin_national = trier_df(df_admin_national)
             df_admin_dcr = trier_df(df_admin_dcr)
 
-            # 5. Séparation Prio / Classique pour la DCR (le flux principal restant)
-            df_prio, df_classique = pd.DataFrame(), df_export.copy()
+            # ---------------------------------------------------------
+            # GESTION INTERACTIVE DE LA LISTE PRIORITAIRE DCR
+            # ---------------------------------------------------------
+            mask_prio = pd.Series(False, index=df_export.index)
             if 'Date réception' in df_export.columns and date_prio is not None:
                 dates_reception = pd.to_datetime(df_export['Date réception']).dt.date
                 mask_prio = dates_reception <= date_prio
-                df_prio = df_export[mask_prio].copy()
-                df_classique = df_export[~mask_prio].copy()
+                
+            # Ajout de la colonne Prioritaire tout au début
+            df_export.insert(0, 'Prioritaire', mask_prio)
 
-            # ==========================================
-            # GÉNÉRATION DU FICHIER EXCEL UNIQUE
-            # ==========================================
+            # Configuration des colonnes
+            config_colonnes = {
+                "Prioritaire": st.column_config.CheckboxColumn(
+                    "⭐ Prioritaire",
+                    help="Cochez pour placer ce dossier dans la liste prioritaire",
+                    default=False
+                ),
+                "Bénéficiaire": st.column_config.TextColumn(
+                    "Bénéficiaire",
+                    width="small"
+                )
+            }
+            
+            # Formatage dynamique : on applique les largeurs réduites sur Commentaire et certaines Dates
+            for col in df_export.columns:
+                col_name_lower = str(col).lower()
+                
+                # Réduction du "commentaire"
+                if 'commentaire' in col_name_lower:
+                    config_colonnes[col] = st.column_config.TextColumn(
+                        col,
+                        width="small"
+                    )
+                
+                # Formatage JJ/MM/AAAA pour toutes les "dates"
+                elif 'date' in col_name_lower:
+                    # On réduit la largeur si c'est une date "prévisionnelle" ou "réelle"
+                    if 'prévisionnelle' in col_name_lower or 'réelle' in col_name_lower:
+                        config_colonnes[col] = st.column_config.DateColumn(
+                            col,
+                            format="DD/MM/YYYY",
+                            width="small"
+                        )
+                    else:
+                        config_colonnes[col] = st.column_config.DateColumn(
+                            col,
+                            format="DD/MM/YYYY"
+                        )
+
+            with st.expander("🛠️ Afficher les dossiers de la file DCR et ajuster la liste prioritaire", expanded=True):
+                st.info("💡 **Astuce :** Vous pouvez cocher/décocher manuellement n'importe quelle ligne.\n\n📌 **Pour figer la colonne 'Prioritaire' pendant que vous allez vers la droite :** Passez votre souris sur l'en-tête '⭐ Prioritaire', cliquez sur les **3 petits points (⋮)** qui apparaissent, puis choisissez **'Pin column'**.")
+                
+                # Le tableau de base propre
+                df_export_modifie = st.data_editor(
+                    df_export,
+                    column_config=config_colonnes,
+                    disabled=[col for col in df_export.columns if col != "Prioritaire"],
+                    hide_index=True,
+                    use_container_width=True,
+                    height=450,
+                    key=f"editor_dcr_{date_prio}" 
+                )
+
+            df_prio = df_export_modifie[df_export_modifie['Prioritaire']].drop(columns=['Prioritaire']).copy()
+            df_classique = df_export_modifie[~df_export_modifie['Prioritaire']].drop(columns=['Prioritaire']).copy()
+            # ---------------------------------------------------------
+
             st.divider()
             
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
-                # L'ordre exact des appels ici définit l'ordre des feuilles de gauche à droite dans Excel
                 ajouter_feuille_dcr(writer, df_prio, df_classique, 'DCR')
                 if not df_national.empty: ajouter_feuille_formatee(writer, df_national.drop(columns=['SIREN'], errors='ignore'), 'National')
                 if not df_admin_national.empty: ajouter_feuille_formatee(writer, df_admin_national.drop(columns=['SIREN'], errors='ignore'), 'ADMIN National')
                 if not df_admin_dcr.empty: ajouter_feuille_formatee(writer, df_admin_dcr.drop(columns=['SIREN'], errors='ignore'), 'ADMIN DCR')
                 if not df_confort.empty: ajouter_feuille_formatee(writer, df_confort.drop(columns=['SIREN'], errors='ignore'), 'Confort')
 
-            # Bouton de téléchargement principal (remplace le zip)
             date_export = datetime.now(TZ_FRANCE).strftime("%d-%m-%Y")
             st.download_button(
                 label="📥 TÉLÉCHARGER L'EXPORT GLOBAL ODICEE (.xlsx)", 
@@ -199,7 +248,6 @@ with tab_generateur:
                 type="primary"
             )
             
-            # Affichage des compteurs pour rassurer l'utilisateur
             c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("📈 DCR", f"{len(df_prio) + len(df_classique)} lignes")
             c2.metric("🇫🇷 National", f"{len(df_national)} lignes")
@@ -209,7 +257,6 @@ with tab_generateur:
 
             st.divider()
             
-            # Mise à jour des boutons d'affichage des tableaux de synthèse
             st.markdown("### 📊 Tableaux de synthèse par onglet")
             
             tog1, tog2, tog3, tog4, tog5 = st.columns(5)
