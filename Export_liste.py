@@ -12,7 +12,8 @@ from fonctions import (
     afficher_tableau_synthese, 
     ajouter_feuille_formatee, 
     ajouter_feuille_dcr,       
-    afficher_gestion_liste_bs
+    afficher_gestion_liste_bs,
+    afficher_gestion_initiales # <-- NOUVEAU
 )
 
 st.set_page_config(page_title="Générateur d'Exports CEE", layout="wide")
@@ -56,21 +57,45 @@ def load_liste_bs():
     except Exception as e:
         return {}, pd.DataFrame(columns=["SIREN", "Nom BS"])
 
+# --- NOUVEAU : Chargement des initiales ---
+@st.cache_data(ttl=30)
+def load_liste_initiales():
+    try:
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Liste_initiales")
+        if df.empty: return {}, pd.DataFrame(columns=["Initiales", "Couleur"])
+        df_clean = df.copy().dropna(subset=["Initiales"])
+        # Renvoie un dictionnaire {"AB": "#FF0000"} et le DF brut pour l'éditeur
+        return dict(zip(df_clean['Initiales'].astype(str).str.strip(), df_clean['Couleur'].astype(str).str.strip())), df
+    except Exception as e:
+        return {}, pd.DataFrame(columns=["Initiales", "Couleur"])
+
 # --- Initialisation ---
 dict_confort, df_confort_gsheet = load_worksheet("Confort")
 dict_national, df_national_gsheet = load_worksheet("CDC") 
 mots_docs_admin, mots_coms_admin = load_admin()
 dict_bs_global, df_liste_bs_gsheet = load_liste_bs()
+dict_initiales, df_initiales_gsheet = load_liste_initiales() # <-- NOUVEAU
 
 st.title("Générateur d'Exports CEE")
 
-tab_generateur, tab_confort, tab_national, tab_admin, tab_liste_bs = st.tabs([
-    "📊 Générateur", "⚙️ Base Confort", "⚙️ Base National", "🛡️ Filtres ADMIN", "🏢 Base BS ODICEE"
+# LE DERNIER ONGLET EST RENOMMÉ "Paramètres"
+tab_generateur, tab_confort, tab_national, tab_admin, tab_parametres = st.tabs([
+    "📊 Générateur", "⚙️ Base Confort", "⚙️ Base National", "🛡️ Filtres ADMIN", "⚙️ Paramètres"
 ])
 
 with tab_confort: afficher_gestion_base("Confort", df_confort_gsheet, conn, SPREADSHEET_URL, dict_bs_global)
 with tab_national: afficher_gestion_base("CDC", df_national_gsheet, conn, SPREADSHEET_URL, dict_bs_global)
-with tab_liste_bs: afficher_gestion_liste_bs(df_liste_bs_gsheet, conn, SPREADSHEET_URL)
+
+# --- NOUVEAU : Sous-onglets dans Paramètres ---
+with tab_parametres:
+    st.header("⚙️ Paramètres globaux")
+    sous_tab_bs, sous_tab_init = st.tabs(["🏢 Base BS ODICEE", "🎨 Gérer initiales"])
+    
+    with sous_tab_bs:
+        afficher_gestion_liste_bs(df_liste_bs_gsheet, conn, SPREADSHEET_URL)
+        
+    with sous_tab_init:
+        afficher_gestion_initiales(df_initiales_gsheet, conn, SPREADSHEET_URL)
 
 with tab_admin:
     st.header("🛠️ Mots-clés pour le tri automatique ADMIN")
@@ -169,10 +194,8 @@ with tab_generateur:
                 dates_reception = pd.to_datetime(df_export['Date réception']).dt.date
                 mask_prio = dates_reception <= date_prio
                 
-            # Ajout de la colonne Prioritaire tout au début
             df_export.insert(0, 'Prioritaire', mask_prio)
 
-            # Configuration des colonnes
             config_colonnes = {
                 "Prioritaire": st.column_config.CheckboxColumn(
                     "⭐ Prioritaire",
@@ -185,36 +208,19 @@ with tab_generateur:
                 )
             }
             
-            # Formatage dynamique : on applique les largeurs réduites sur Commentaire et certaines Dates
             for col in df_export.columns:
                 col_name_lower = str(col).lower()
-                
-                # Réduction du "commentaire"
                 if 'commentaire' in col_name_lower:
-                    config_colonnes[col] = st.column_config.TextColumn(
-                        col,
-                        width="small"
-                    )
-                
-                # Formatage JJ/MM/AAAA pour toutes les "dates"
+                    config_colonnes[col] = st.column_config.TextColumn(col, width="small")
                 elif 'date' in col_name_lower:
-                    # On réduit la largeur si c'est une date "prévisionnelle" ou "réelle"
                     if 'prévisionnelle' in col_name_lower or 'réelle' in col_name_lower:
-                        config_colonnes[col] = st.column_config.DateColumn(
-                            col,
-                            format="DD/MM/YYYY",
-                            width="small"
-                        )
+                        config_colonnes[col] = st.column_config.DateColumn(col, format="DD/MM/YYYY", width="small")
                     else:
-                        config_colonnes[col] = st.column_config.DateColumn(
-                            col,
-                            format="DD/MM/YYYY"
-                        )
+                        config_colonnes[col] = st.column_config.DateColumn(col, format="DD/MM/YYYY")
 
             with st.expander("🛠️ Afficher les dossiers de la file DCR et ajuster la liste prioritaire", expanded=True):
                 st.info("💡 **Astuce :** Vous pouvez cocher/décocher manuellement n'importe quelle ligne.\n\n📌 **Pour figer la colonne 'Prioritaire' pendant que vous allez vers la droite :** Passez votre souris sur l'en-tête '⭐ Prioritaire', cliquez sur les **3 petits points (⋮)** qui apparaissent, puis choisissez **'Pin column'**.")
                 
-                # Le tableau de base propre
                 df_export_modifie = st.data_editor(
                     df_export,
                     column_config=config_colonnes,
@@ -233,11 +239,12 @@ with tab_generateur:
             
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
-                ajouter_feuille_dcr(writer, df_prio, df_classique, 'DCR')
-                if not df_national.empty: ajouter_feuille_formatee(writer, df_national.drop(columns=['SIREN'], errors='ignore'), 'National')
-                if not df_admin_national.empty: ajouter_feuille_formatee(writer, df_admin_national.drop(columns=['SIREN'], errors='ignore'), 'ADMIN National')
-                if not df_admin_dcr.empty: ajouter_feuille_formatee(writer, df_admin_dcr.drop(columns=['SIREN'], errors='ignore'), 'ADMIN DCR')
-                if not df_confort.empty: ajouter_feuille_formatee(writer, df_confort.drop(columns=['SIREN'], errors='ignore'), 'Confort')
+                # NOUVEAU : On passe le dictionnaire des initiales aux fonctions
+                ajouter_feuille_dcr(writer, df_prio, df_classique, 'DCR', dict_initiales)
+                if not df_national.empty: ajouter_feuille_formatee(writer, df_national.drop(columns=['SIREN'], errors='ignore'), 'National', dict_initiales)
+                if not df_admin_national.empty: ajouter_feuille_formatee(writer, df_admin_national.drop(columns=['SIREN'], errors='ignore'), 'ADMIN National', dict_initiales)
+                if not df_admin_dcr.empty: ajouter_feuille_formatee(writer, df_admin_dcr.drop(columns=['SIREN'], errors='ignore'), 'ADMIN DCR', dict_initiales)
+                if not df_confort.empty: ajouter_feuille_formatee(writer, df_confort.drop(columns=['SIREN'], errors='ignore'), 'Confort', dict_initiales)
 
             date_export = datetime.now(TZ_FRANCE).strftime("%d-%m-%Y")
             st.download_button(
