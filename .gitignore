@@ -1,0 +1,6 @@
+venv
+.venv
+__pycache__/
+.streamlit/secrets.toml
+*.pyc
+.database/Export_global_BS_2026-06-04.csv
