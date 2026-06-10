@@ -215,24 +215,23 @@ with tab_generateur:
             # On travaille toujours sur la version stockée
             df_export = st.session_state[cache_key]
 
+            static_key = f"editor_dcr_{fichier_hash}"
+
             # --- CALLBACK : modifie directement le dataframe stocké, sans rerun ---
-            def on_prio_change():
-                editor_state = st.session_state.get(static_key)
+            def on_prio_change(_cache_key=cache_key, _static_key=static_key):
+                editor_state = st.session_state.get(_static_key)
                 if editor_state and "edited_rows" in editor_state:
+                    df_cached = st.session_state[_cache_key]
                     for row_idx_str, changes in editor_state["edited_rows"].items():
                         row_idx = int(row_idx_str)
-                        if "Prioritaire" in changes and 'Numéro dossier' in df_export.columns:
-                            num_dossier = df_export.iloc[row_idx]["Numéro dossier"]
+                        if "Prioritaire" in changes and 'Numéro dossier' in df_cached.columns:
+                            num_dossier = df_cached.iloc[row_idx]["Numéro dossier"]
                             nouveau_statut = changes["Prioritaire"]
                             # Met à jour toutes les lignes avec le même numéro de dossier
-                            st.session_state[cache_key].loc[
-                                st.session_state[cache_key]['Numéro dossier'] == num_dossier, 'Prioritaire'
+                            st.session_state[_cache_key].loc[
+                                st.session_state[_cache_key]['Numéro dossier'] == num_dossier, 'Prioritaire'
                             ] = nouveau_statut
-                    # Recharge df_export depuis le cache pour le reste du rendu
-                    df_export = st.session_state[cache_key]  # noqa: F841
             # -------------------------------------------------------
-
-            static_key = f"editor_dcr_{fichier_hash}"
 
             config_colonnes = {
                 "Prioritaire": st.column_config.CheckboxColumn(
