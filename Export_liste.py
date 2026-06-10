@@ -201,6 +201,19 @@ with tab_generateur:
                 
             df_export.insert(0, 'Prioritaire', mask_prio)
 
+            # --- NOUVEAU : SYNCHRONISATION PAR NUMÉRO DE DOSSIER ---
+            # Initialisation des variables de session pour retenir les clics
+            if 'prio_manuelle' not in st.session_state:
+                st.session_state.prio_manuelle = {}
+            if 'editor_refresh' not in st.session_state:
+                st.session_state.editor_refresh = 0
+
+            # 1. On applique les choix manuels (cochés/décochés) enregistrés sur tout le dossier
+            if 'Numéro dossier' in df_export.columns:
+                for num_dossier, statut in st.session_state.prio_manuelle.items():
+                    df_export.loc[df_export['Numéro dossier'] == num_dossier, 'Prioritaire'] = statut
+            # -------------------------------------------------------
+
             config_colonnes = {
                 "Prioritaire": st.column_config.CheckboxColumn(
                     "⭐ Prioritaire",
@@ -225,6 +238,9 @@ with tab_generateur:
 
             with st.expander("🛠️ Afficher les dossiers de la file DCR et ajuster la liste prioritaire", expanded=True):
                 
+                # Clé dynamique : permet de vider le cache du widget lors d'un rafraîchissement forcé
+                dynamic_key = f"editor_dcr_{date_prio}_{st.session_state.editor_refresh}"
+
                 df_export_modifie = st.data_editor(
                     df_export,
                     column_config=config_colonnes,
@@ -232,8 +248,25 @@ with tab_generateur:
                     hide_index=True,
                     use_container_width=True,
                     height=450,
-                    key=f"editor_dcr_{date_prio}" 
+                    key=dynamic_key 
                 )
+
+            # --- NOUVEAU : DÉTECTION DU CLIC ET RAFRAÎCHISSEMENT ---
+            if 'Numéro dossier' in df_export.columns:
+                # On cherche les différences entre la base affichée et ce que l'utilisateur vient de cliquer
+                diff = df_export_modifie['Prioritaire'] != df_export['Prioritaire']
+                if diff.any():
+                    lignes_modifiees = df_export_modifie[diff]
+                    for _, row in lignes_modifiees.iterrows():
+                        num_dossier = row['Numéro dossier']
+                        nouveau_statut = row['Prioritaire']
+                        # On enregistre la volonté de l'utilisateur pour ce numéro de dossier précis
+                        st.session_state.prio_manuelle[num_dossier] = nouveau_statut
+                    
+                    # On incrémente la clé et on relance la page pour cocher/décocher visuellement les doublons
+                    st.session_state.editor_refresh += 1
+                    st.rerun()
+            # -------------------------------------------------------
 
             df_prio = df_export_modifie[df_export_modifie['Prioritaire']].drop(columns=['Prioritaire']).copy()
             df_classique = df_export_modifie[~df_export_modifie['Prioritaire']].drop(columns=['Prioritaire']).copy()
