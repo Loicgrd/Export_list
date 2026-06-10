@@ -119,7 +119,6 @@ def afficher_gestion_liste_bs(df_gsheet, conn, spreadsheet_url):
             st.success("✅ La base de données BS a bien été mise à jour !")
             st.rerun()
 
-# --- NOUVELLE FONCTION AVEC SELECTEUR DE COULEUR VISUEL ---
 def afficher_gestion_initiales(df_gsheet, conn, spreadsheet_url):
     st.markdown("""
     Définissez ici les initiales de votre équipe et choisissez leur couleur en cliquant sur le carré visuel.
@@ -136,7 +135,6 @@ def afficher_gestion_initiales(df_gsheet, conn, spreadsheet_url):
     with c1:
         nouvelle_init = st.text_input("Initiales (ex: AB)")
     with c2:
-        # LE VRAI SELECTEUR DE COULEUR STREAMLIT
         nouvelle_couleur = st.color_picker("Couleur", "#FFC300")
     with c3:
         st.write("") 
@@ -146,7 +144,6 @@ def afficher_gestion_initiales(df_gsheet, conn, spreadsheet_url):
                 df_temp = df_display.copy()
                 init_propre = nouvelle_init.strip()
                 
-                # Mise à jour si existe, sinon ajout
                 if init_propre in df_temp['Initiales'].values:
                     df_temp.loc[df_temp['Initiales'] == init_propre, 'Couleur'] = nouvelle_couleur
                 else:
@@ -166,23 +163,19 @@ def afficher_gestion_initiales(df_gsheet, conn, spreadsheet_url):
     if not df_display.empty and not df_display.dropna(subset=['Initiales']).empty:
         df_clean = df_display.dropna(subset=['Initiales']).copy()
         
-        # Fonction Pandas pour transformer le code couleur en vrai fond visuel
         def coloriser_fond(valeur):
             try:
                 if str(valeur).startswith('#'):
-                    # Affiche le fond en couleur et cache le texte en le mettant de la même couleur
                     return f'background-color: {valeur}; color: {valeur}; border-radius: 5px;'
             except: pass
             return ''
             
-        # Application du style visuel
         st.dataframe(
             df_clean.style.map(coloriser_fond, subset=['Couleur']) if hasattr(df_clean.style, 'map') else df_clean.style.applymap(coloriser_fond, subset=['Couleur']),
             use_container_width=True, 
             hide_index=True
         )
         
-        # Outil de suppression
         st.subheader("🗑️ Supprimer")
         a_supprimer = st.multiselect("Sélectionner les initiales à supprimer :", options=df_clean['Initiales'].tolist(), key="del_init")
         
@@ -241,17 +234,14 @@ def ajouter_feuille_formatee(writer, df, nom_feuille, dict_initiales=None):
         total_lignes = max_row + 1
         dossier_col_letter = xl_col_to_name(df.columns.get_loc('Numéro dossier')) if 'Numéro dossier' in df.columns else None
         
-        # 1. Règles Spécifiques : Pour chaque initiale dans la base, on applique sa couleur (Priorité Forte)
         for init, color in dict_initiales.items():
             color_clean = str(color).strip()
             if color_clean and color_clean.lower() != 'nan':
-                # Ajoute le '#' au cas où l'utilisateur l'aurait oublié
                 if not color_clean.startswith('#') and len(color_clean) == 6: color_clean = f"#{color_clean}"
                 fmt_init = writer.book.add_format({'bg_color': color_clean, 'font_color': '#000000'})
                 formula_init = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes}, ${dossier_col_letter}2, $A$1:$A${total_lignes}, "{init}")>0' if dossier_col_letter else f'=$A2="{init}"'
                 worksheet.conditional_format(1, 0, max_row, max_col - 1, {'type': 'formula', 'criteria': formula_init, 'format': fmt_init})
         
-        # 2. Règle Générique par défaut (Jaune) si rempli avec une initiale inconnue (Priorité Basse)
         fmt_en_cours = writer.book.add_format({'bg_color': '#FFE699', 'font_color': '#595959'})
         formula_default = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes}, ${dossier_col_letter}2, $A$1:$A${total_lignes}, "<>")>0' if dossier_col_letter else '=$A2<>""'
         worksheet.conditional_format(1, 0, max_row, max_col - 1, {'type': 'formula', 'criteria': formula_default, 'format': fmt_en_cours})
@@ -271,6 +261,11 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
     workbook = writer.book
     worksheet = workbook.add_worksheet(nom_feuille)
     
+    # ----------------------------------------------------
+    # NOUVEAU : Fige les 2 premières lignes de l'onglet DCR
+    # ----------------------------------------------------
+    worksheet.freeze_panes(2, 0)
+    
     fmt_rouge = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': 'red', 'align': 'center', 'valign': 'vcenter'})
     fmt_bleu = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': '#3a75c4', 'align': 'center', 'valign': 'vcenter'})
     fmt_header = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
@@ -289,7 +284,6 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
         df_prio.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
         end_prio = current_row + len(df_prio) - 1
         
-        # Initiales prio
         for init, color in dict_initiales.items():
             color_clean = str(color).strip()
             if color_clean and color_clean.lower() != 'nan':
@@ -298,7 +292,6 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
                 f_prio_init = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes_excel}, ${dossier_col_letter}{start_prio + 1}, $A$1:$A${total_lignes_excel}, "{init}")>0' if dossier_col_letter else f'=$A{start_prio + 1}="{init}"'
                 worksheet.conditional_format(start_prio, 0, end_prio, max_col - 1, {'type': 'formula', 'criteria': f_prio_init, 'format': fmt_init})
 
-        # Défaut prio
         formule_prio = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes_excel}, ${dossier_col_letter}{start_prio + 1}, $A$1:$A${total_lignes_excel}, "<>")>0' if dossier_col_letter else f'=$A{start_prio + 1}<>""'
         worksheet.conditional_format(start_prio, 0, end_prio, max_col - 1, {'type': 'formula', 'criteria': formule_prio, 'format': fmt_en_cours})
         
@@ -317,7 +310,6 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
             df_classique.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
             end_classique = current_row + len(df_classique) - 1
             
-            # Initiales classique
             for init, color in dict_initiales.items():
                 color_clean = str(color).strip()
                 if color_clean and color_clean.lower() != 'nan':
@@ -326,7 +318,6 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
                     f_classique_init = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes_excel}, ${dossier_col_letter}{start_classique + 1}, $A$1:$A${total_lignes_excel}, "{init}")>0' if dossier_col_letter else f'=$A{start_classique + 1}="{init}"'
                     worksheet.conditional_format(start_classique, 0, end_classique, max_col - 1, {'type': 'formula', 'criteria': f_classique_init, 'format': fmt_init})
 
-            # Défaut classique
             formule_classique = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${total_lignes_excel}, ${dossier_col_letter}{start_classique + 1}, $A$1:$A${total_lignes_excel}, "<>")>0' if dossier_col_letter else f'=$A{start_classique + 1}<>""'
             worksheet.conditional_format(start_classique, 0, end_classique, max_col - 1, {'type': 'formula', 'criteria': formule_classique, 'format': fmt_en_cours})
             worksheet.autofilter(ligne_entete, 0, end_classique, max_col - 1)
