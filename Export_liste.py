@@ -271,7 +271,7 @@ with tab_generateur:
             
             tog1, tog2, tog3, tog4, tog5 = st.columns(5)
             show_dcr = tog1.toggle("📈 Synthèse DCR", value=False)
-            show_nat = tog2.toggle("🇫🇷 Synthèse National", value=False)
+            show_nat = tog2.toggle("📈 Synthèse National", value=False)
             show_admin_nat = tog3.toggle("🛡️ Synthèse ADM Nat", value=False)
             show_admin_dcr = tog4.toggle("🛡️ Synthèse ADM DCR", value=False)
             show_confort = tog5.toggle("🏢 Synthèse CONFORT", value=False)
