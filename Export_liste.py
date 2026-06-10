@@ -194,22 +194,45 @@ with tab_generateur:
             # ---------------------------------------------------------
             # GESTION INTERACTIVE DE LA LISTE PRIORITAIRE DCR
             # ---------------------------------------------------------
-            mask_prio = pd.Series(False, index=df_export.index)
-            if 'Date réception' in df_export.columns and date_prio is not None:
-                dates_reception = pd.to_datetime(df_export['Date réception']).dt.date
-                mask_prio = dates_reception <= date_prio
-                
-            df_export.insert(0, 'Prioritaire', mask_prio)
 
-            # --- SYNCHRONISATION PAR NUMÉRO DE DOSSIER ---
-            if 'prio_manuelle' not in st.session_state:
-                st.session_state.prio_manuelle = {}
+            # Clé unique basée sur le fichier + la date : si l'un change, on reconstruit
+            fichier_hash = hash(uploaded_file.name + str(len(df_source)) + str(date_prio))
+            cache_key = f"df_export_cache_{fichier_hash}"
 
-            # 1. On applique les choix manuels enregistrés
-            if 'Numéro dossier' in df_export.columns:
-                for num_dossier, statut in st.session_state.prio_manuelle.items():
-                    df_export.loc[df_export['Numéro dossier'] == num_dossier, 'Prioritaire'] = statut
+            if cache_key not in st.session_state:
+                # Premier rendu (ou changement de fichier/date) : on construit df_export et on le stocke
+                mask_prio = pd.Series(False, index=df_export.index)
+                if 'Date réception' in df_export.columns and date_prio is not None:
+                    dates_reception = pd.to_datetime(df_export['Date réception']).dt.date
+                    mask_prio = dates_reception <= date_prio
+                df_export.insert(0, 'Prioritaire', mask_prio)
+                st.session_state[cache_key] = df_export.copy()
+                # Nettoie les caches des anciens fichiers pour ne pas saturer la mémoire
+                for k in list(st.session_state.keys()):
+                    if k.startswith("df_export_cache_") and k != cache_key:
+                        del st.session_state[k]
+
+            # On travaille toujours sur la version stockée
+            df_export = st.session_state[cache_key]
+
+            # --- CALLBACK : modifie directement le dataframe stocké, sans rerun ---
+            def on_prio_change():
+                editor_state = st.session_state.get(static_key)
+                if editor_state and "edited_rows" in editor_state:
+                    for row_idx_str, changes in editor_state["edited_rows"].items():
+                        row_idx = int(row_idx_str)
+                        if "Prioritaire" in changes and 'Numéro dossier' in df_export.columns:
+                            num_dossier = df_export.iloc[row_idx]["Numéro dossier"]
+                            nouveau_statut = changes["Prioritaire"]
+                            # Met à jour toutes les lignes avec le même numéro de dossier
+                            st.session_state[cache_key].loc[
+                                st.session_state[cache_key]['Numéro dossier'] == num_dossier, 'Prioritaire'
+                            ] = nouveau_statut
+                    # Recharge df_export depuis le cache pour le reste du rendu
+                    df_export = st.session_state[cache_key]  # noqa: F841
             # -------------------------------------------------------
+
+            static_key = f"editor_dcr_{fichier_hash}"
 
             config_colonnes = {
                 "Prioritaire": st.column_config.CheckboxColumn(
@@ -232,20 +255,6 @@ with tab_generateur:
                         config_colonnes[col] = st.column_config.DateColumn(col, format="DD/MM/YYYY", width="small")
                     else:
                         config_colonnes[col] = st.column_config.DateColumn(col, format="DD/MM/YYYY")
-
-            static_key = f"editor_dcr_{date_prio}"
-
-            # --- CALLBACK : déclenché immédiatement quand une case est cochée ---
-            def on_prio_change():
-                editor_state = st.session_state.get(static_key)
-                if editor_state and "edited_rows" in editor_state:
-                    for row_idx_str, changes in editor_state["edited_rows"].items():
-                        row_idx = int(row_idx_str)
-                        if "Prioritaire" in changes and 'Numéro dossier' in df_export.columns:
-                            num_dossier = df_export.iloc[row_idx]["Numéro dossier"]
-                            nouveau_statut = changes["Prioritaire"]
-                            st.session_state.prio_manuelle[num_dossier] = nouveau_statut
-            # -------------------------------------------------------
 
             with st.expander("🛠️ Afficher les dossiers de la file DCR et ajuster la liste prioritaire", expanded=True):
                 df_export_modifie = st.data_editor(
