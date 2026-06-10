@@ -249,14 +249,14 @@ def ajouter_feuille_formatee(writer, df, nom_feuille, dict_initiales=None):
                 else:
                     formula_init = f'=$A2="{init}"'
                     
-                worksheet.conditional_format(1, 0, max_row, max_col - 1, {'type': 'formula', 'criteria': formula_init, 'format': fmt_init})
+                worksheet.conditional_format(1, 0, max_row, 2, {'type': 'formula', 'criteria': formula_init, 'format': fmt_init})
         
         fmt_en_cours = writer.book.add_format({'bg_color': '#FFE699', 'font_color': '#595959'})
         if dossier_col_letter:
             formula_default = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}2, {plage_init}, "<>")>0'
         else:
             formula_default = '=$A2<>""'
-        worksheet.conditional_format(1, 0, max_row, max_col - 1, {'type': 'formula', 'criteria': formula_default, 'format': fmt_en_cours})
+        worksheet.conditional_format(1, 0, max_row, 2, {'type': 'formula', 'criteria': formula_default, 'format': fmt_en_cours})
         
         for i in range(max_col): worksheet.set_column(i, i, 16) 
 
@@ -310,13 +310,13 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
                 else:
                     f_prio_init = f'=$A{start_prio + 1}="{init}"'
                     
-                worksheet.conditional_format(start_prio, 0, end_prio, max_col - 1, {'type': 'formula', 'criteria': f_prio_init, 'format': fmt_init})
+                worksheet.conditional_format(start_prio, 0, end_prio, 2, {'type': 'formula', 'criteria': f_prio_init, 'format': fmt_init})
 
         if dossier_col_letter:
             formule_prio = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_prio + 1}, {plage_init}, "<>")>0'
         else:
             formule_prio = f'=$A{start_prio + 1}<>""'
-        worksheet.conditional_format(start_prio, 0, end_prio, max_col - 1, {'type': 'formula', 'criteria': formule_prio, 'format': fmt_en_cours})
+        worksheet.conditional_format(start_prio, 0, end_prio, 2, {'type': 'formula', 'criteria': formule_prio, 'format': fmt_en_cours})
         
         current_row += len(df_prio)
         worksheet.merge_range(current_row, 0, current_row, max_col - 1, "↑ /!\\ Liste prioritaire /!\\ ↑", fmt_rouge)
@@ -344,13 +344,13 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
                     else:
                         f_classique_init = f'=$A{start_classique + 1}="{init}"'
                         
-                    worksheet.conditional_format(start_classique, 0, end_classique, max_col - 1, {'type': 'formula', 'criteria': f_classique_init, 'format': fmt_init})
+                    worksheet.conditional_format(start_classique, 0, end_classique, 2, {'type': 'formula', 'criteria': f_classique_init, 'format': fmt_init})
 
             if dossier_col_letter:
                 formule_classique = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_classique + 1}, {plage_init}, "<>")>0'
             else:
                 formule_classique = f'=$A{start_classique + 1}<>""'
-            worksheet.conditional_format(start_classique, 0, end_classique, max_col - 1, {'type': 'formula', 'criteria': formule_classique, 'format': fmt_en_cours})
+            worksheet.conditional_format(start_classique, 0, end_classique, 2, {'type': 'formula', 'criteria': formule_classique, 'format': fmt_en_cours})
             worksheet.autofilter(ligne_entete, 0, end_classique, max_col - 1)
             
     for i in range(max_col): worksheet.set_column(i, i, 16)
