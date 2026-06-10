@@ -238,18 +238,20 @@ def ajouter_feuille_formatee(writer, df, nom_feuille, dict_initiales=None):
         plage_dossier = f"${dossier_col_letter}$2:${dossier_col_letter}${total_lignes}" if dossier_col_letter else ""
         plage_init = f"$A$2:$A${total_lignes}"
         
+        # Création des formats une seule fois avant la boucle
+        formats_init = {}
         for init, color in dict_initiales.items():
             color_clean = str(color).strip()
             if color_clean and color_clean.lower() != 'nan':
                 if not color_clean.startswith('#') and len(color_clean) == 6: color_clean = f"#{color_clean}"
-                fmt_init = writer.book.add_format({'bg_color': color_clean, 'font_color': '#000000'})
-                
-                if dossier_col_letter:
-                    formula_init = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}2, {plage_init}, "{init}")>0'
-                else:
-                    formula_init = f'=$A2="{init}"'
-                    
-                worksheet.conditional_format(1, 0, max_row, 2, {'type': 'formula', 'criteria': formula_init, 'format': fmt_init})
+                formats_init[init] = writer.book.add_format({'bg_color': color_clean, 'font_color': '#000000'})
+
+        for init, fmt_init in formats_init.items():
+            if dossier_col_letter:
+                formula_init = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}2, {plage_init}, "{init}")>0'
+            else:
+                formula_init = f'=$A2="{init}"'
+            worksheet.conditional_format(1, 0, max_row, 2, {'type': 'formula', 'criteria': formula_init, 'format': fmt_init})
         
         fmt_en_cours = writer.book.add_format({'bg_color': '#FFE699', 'font_color': '#595959'})
         if dossier_col_letter:
@@ -289,6 +291,14 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
     
     plage_dossier = f"${dossier_col_letter}${first_data_row_excel}:${dossier_col_letter}${last_data_row_excel}" if dossier_col_letter else ""
     plage_init = f"$A${first_data_row_excel}:$A${last_data_row_excel}"
+
+    # Création des formats une seule fois pour toute la fonction DCR
+    formats_init = {}
+    for init, color in dict_initiales.items():
+        color_clean = str(color).strip()
+        if color_clean and color_clean.lower() != 'nan':
+            if not color_clean.startswith('#') and len(color_clean) == 6: color_clean = f"#{color_clean}"
+            formats_init[init] = workbook.add_format({'bg_color': color_clean, 'font_color': '#000000'})
     
     if not df_prio.empty:
         worksheet.merge_range(current_row, 0, current_row, max_col - 1, "↓ /!\\ Liste prioritaire /!\\ ↓", fmt_rouge)
@@ -299,18 +309,12 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
         df_prio.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
         end_prio = current_row + len(df_prio) - 1
         
-        for init, color in dict_initiales.items():
-            color_clean = str(color).strip()
-            if color_clean and color_clean.lower() != 'nan':
-                if not color_clean.startswith('#') and len(color_clean) == 6: color_clean = f"#{color_clean}"
-                fmt_init = workbook.add_format({'bg_color': color_clean, 'font_color': '#000000'})
-                
-                if dossier_col_letter:
-                    f_prio_init = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_prio + 1}, {plage_init}, "{init}")>0'
-                else:
-                    f_prio_init = f'=$A{start_prio + 1}="{init}"'
-                    
-                worksheet.conditional_format(start_prio, 0, end_prio, 2, {'type': 'formula', 'criteria': f_prio_init, 'format': fmt_init})
+        for init, fmt_init in formats_init.items():
+            if dossier_col_letter:
+                f_prio_init = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_prio + 1}, {plage_init}, "{init}")>0'
+            else:
+                f_prio_init = f'=$A{start_prio + 1}="{init}"'
+            worksheet.conditional_format(start_prio, 0, end_prio, 2, {'type': 'formula', 'criteria': f_prio_init, 'format': fmt_init})
 
         if dossier_col_letter:
             formule_prio = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_prio + 1}, {plage_init}, "<>")>0'
@@ -333,18 +337,12 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
             df_classique.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
             end_classique = current_row + len(df_classique) - 1
             
-            for init, color in dict_initiales.items():
-                color_clean = str(color).strip()
-                if color_clean and color_clean.lower() != 'nan':
-                    if not color_clean.startswith('#') and len(color_clean) == 6: color_clean = f"#{color_clean}"
-                    fmt_init = workbook.add_format({'bg_color': color_clean, 'font_color': '#000000'})
-                    
-                    if dossier_col_letter:
-                        f_classique_init = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_classique + 1}, {plage_init}, "{init}")>0'
-                    else:
-                        f_classique_init = f'=$A{start_classique + 1}="{init}"'
-                        
-                    worksheet.conditional_format(start_classique, 0, end_classique, 2, {'type': 'formula', 'criteria': f_classique_init, 'format': fmt_init})
+            for init, fmt_init in formats_init.items():
+                if dossier_col_letter:
+                    f_classique_init = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_classique + 1}, {plage_init}, "{init}")>0'
+                else:
+                    f_classique_init = f'=$A{start_classique + 1}="{init}"'
+                worksheet.conditional_format(start_classique, 0, end_classique, 2, {'type': 'formula', 'criteria': f_classique_init, 'format': fmt_init})
 
             if dossier_col_letter:
                 formule_classique = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_classique + 1}, {plage_init}, "<>")>0'
