@@ -224,8 +224,7 @@ with tab_generateur:
                         config_colonnes[col] = st.column_config.DateColumn(col, format="DD/MM/YYYY")
 
             with st.expander("🛠️ Afficher les dossiers de la file DCR et ajuster la liste prioritaire", expanded=True):
-                
-                st.info("💡 **Astuce :** Cochez une seule ligne d'un dossier. Le script passera automatiquement toutes les autres lignes du même dossier en prioritaire lors de l'export !")
+            
                 
                 df_export_modifie = st.data_editor(
                     df_export,
