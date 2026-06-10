@@ -194,44 +194,12 @@ with tab_generateur:
             # ---------------------------------------------------------
             # GESTION INTERACTIVE DE LA LISTE PRIORITAIRE DCR
             # ---------------------------------------------------------
-
-            # Clé unique basée sur le fichier + la date : si l'un change, on reconstruit
-            fichier_hash = hash(uploaded_file.name + str(len(df_source)) + str(date_prio))
-            cache_key = f"df_export_cache_{fichier_hash}"
-
-            if cache_key not in st.session_state:
-                # Premier rendu (ou changement de fichier/date) : on construit df_export et on le stocke
-                mask_prio = pd.Series(False, index=df_export.index)
-                if 'Date réception' in df_export.columns and date_prio is not None:
-                    dates_reception = pd.to_datetime(df_export['Date réception']).dt.date
-                    mask_prio = dates_reception <= date_prio
-                df_export.insert(0, 'Prioritaire', mask_prio)
-                st.session_state[cache_key] = df_export.copy()
-                # Nettoie les caches des anciens fichiers pour ne pas saturer la mémoire
-                for k in list(st.session_state.keys()):
-                    if k.startswith("df_export_cache_") and k != cache_key:
-                        del st.session_state[k]
-
-            # On travaille toujours sur la version stockée
-            df_export = st.session_state[cache_key]
-
-            static_key = f"editor_dcr_{fichier_hash}"
-
-            # --- CALLBACK : modifie directement le dataframe stocké, sans rerun ---
-            def on_prio_change(_cache_key=cache_key, _static_key=static_key):
-                editor_state = st.session_state.get(_static_key)
-                if editor_state and "edited_rows" in editor_state:
-                    df_cached = st.session_state[_cache_key]
-                    for row_idx_str, changes in editor_state["edited_rows"].items():
-                        row_idx = int(row_idx_str)
-                        if "Prioritaire" in changes and 'Numéro dossier' in df_cached.columns:
-                            num_dossier = df_cached.iloc[row_idx]["Numéro dossier"]
-                            nouveau_statut = changes["Prioritaire"]
-                            # Met à jour toutes les lignes avec le même numéro de dossier
-                            st.session_state[_cache_key].loc[
-                                st.session_state[_cache_key]['Numéro dossier'] == num_dossier, 'Prioritaire'
-                            ] = nouveau_statut
-            # -------------------------------------------------------
+            mask_prio = pd.Series(False, index=df_export.index)
+            if 'Date réception' in df_export.columns and date_prio is not None:
+                dates_reception = pd.to_datetime(df_export['Date réception']).dt.date
+                mask_prio = dates_reception <= date_prio
+                
+            df_export.insert(0, 'Prioritaire', mask_prio)
 
             config_colonnes = {
                 "Prioritaire": st.column_config.CheckboxColumn(
@@ -256,6 +224,7 @@ with tab_generateur:
                         config_colonnes[col] = st.column_config.DateColumn(col, format="DD/MM/YYYY")
 
             with st.expander("🛠️ Afficher les dossiers de la file DCR et ajuster la liste prioritaire", expanded=True):
+                
                 df_export_modifie = st.data_editor(
                     df_export,
                     column_config=config_colonnes,
@@ -263,8 +232,7 @@ with tab_generateur:
                     hide_index=True,
                     use_container_width=True,
                     height=450,
-                    key=static_key,
-                    on_change=on_prio_change,
+                    key=f"editor_dcr_{date_prio}" 
                 )
 
             df_prio = df_export_modifie[df_export_modifie['Prioritaire']].drop(columns=['Prioritaire']).copy()
