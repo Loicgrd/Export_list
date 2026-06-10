@@ -216,7 +216,7 @@ def afficher_tableau_synthese(df, titre):
         st.info(f"**{titre}** : Base vide ou colonnes manquantes.")
 
 # ==========================================
-# FONCTIONS EXCEL (AVEC REGROUPEMENT PAR DOSSIER RESTAURÉ ET OPTIMISÉ)
+# FONCTIONS EXCEL (HYPER-OPTIMISÉES)
 # ==========================================
 def ajouter_feuille_formatee(writer, df, nom_feuille, dict_initiales=None):
     if dict_initiales is None: dict_initiales = {}
@@ -234,7 +234,10 @@ def ajouter_feuille_formatee(writer, df, nom_feuille, dict_initiales=None):
         total_lignes = max_row + 1
         dossier_col_letter = xl_col_to_name(df.columns.get_loc('Numéro dossier')) if 'Numéro dossier' in df.columns else None
         
-        # Application des couleurs spécifiques par Initiale avec regroupement par Numéro de dossier
+        # Cadrage strict des plages de recherche (de la ligne 2 à la dernière ligne existante)
+        plage_dossier = f"${dossier_col_letter}$2:${dossier_col_letter}${total_lignes}" if dossier_col_letter else ""
+        plage_init = f"$A$2:$A${total_lignes}"
+        
         for init, color in dict_initiales.items():
             color_clean = str(color).strip()
             if color_clean and color_clean.lower() != 'nan':
@@ -242,17 +245,15 @@ def ajouter_feuille_formatee(writer, df, nom_feuille, dict_initiales=None):
                 fmt_init = writer.book.add_format({'bg_color': color_clean, 'font_color': '#000000'})
                 
                 if dossier_col_letter:
-                    # On bride la zone de recherche exactement à "total_lignes" pour réduire le lag
-                    formula_init = f'=COUNTIFS(${dossier_col_letter}$2:${dossier_col_letter}${total_lignes}, ${dossier_col_letter}2, $A$2:$A${total_lignes}, "{init}")>0'
+                    formula_init = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}2, {plage_init}, "{init}")>0'
                 else:
                     formula_init = f'=$A2="{init}"'
                     
                 worksheet.conditional_format(1, 0, max_row, max_col - 1, {'type': 'formula', 'criteria': formula_init, 'format': fmt_init})
         
-        # Couleur par défaut (jaune) pour toute initiale inconnue
         fmt_en_cours = writer.book.add_format({'bg_color': '#FFE699', 'font_color': '#595959'})
         if dossier_col_letter:
-            formula_default = f'=COUNTIFS(${dossier_col_letter}$2:${dossier_col_letter}${total_lignes}, ${dossier_col_letter}2, $A$2:$A${total_lignes}, "<>")>0'
+            formula_default = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}2, {plage_init}, "<>")>0'
         else:
             formula_default = '=$A2<>""'
         worksheet.conditional_format(1, 0, max_row, max_col - 1, {'type': 'formula', 'criteria': formula_default, 'format': fmt_en_cours})
@@ -272,7 +273,6 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
     workbook = writer.book
     worksheet = workbook.add_worksheet(nom_feuille)
     
-    # On fige bien les 2 premières lignes comme demandé précédemment
     worksheet.freeze_panes(2, 0)
     
     fmt_rouge = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': 'red', 'align': 'center', 'valign': 'vcenter'})
@@ -283,8 +283,12 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
     current_row = 0
     max_col = len(df_classique.columns) if not df_classique.empty else len(df_prio.columns)
     
-    # Calcul strict de la zone utilisée pour limiter le lag Excel
-    derniere_ligne_dcr = len(df_prio) + len(df_classique) + 5
+    # Cadrage strict des plages de recherche pour l'onglet DCR (ignore les lignes de séparation)
+    first_data_row_excel = 3
+    last_data_row_excel = len(df_prio) + len(df_classique) + 5
+    
+    plage_dossier = f"${dossier_col_letter}${first_data_row_excel}:${dossier_col_letter}${last_data_row_excel}" if dossier_col_letter else ""
+    plage_init = f"$A${first_data_row_excel}:$A${last_data_row_excel}"
     
     if not df_prio.empty:
         worksheet.merge_range(current_row, 0, current_row, max_col - 1, "↓ /!\\ Liste prioritaire /!\\ ↓", fmt_rouge)
@@ -302,14 +306,14 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
                 fmt_init = workbook.add_format({'bg_color': color_clean, 'font_color': '#000000'})
                 
                 if dossier_col_letter:
-                    f_prio_init = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${derniere_ligne_dcr}, ${dossier_col_letter}{start_prio + 1}, $A$1:$A${derniere_ligne_dcr}, "{init}")>0'
+                    f_prio_init = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_prio + 1}, {plage_init}, "{init}")>0'
                 else:
                     f_prio_init = f'=$A{start_prio + 1}="{init}"'
                     
                 worksheet.conditional_format(start_prio, 0, end_prio, max_col - 1, {'type': 'formula', 'criteria': f_prio_init, 'format': fmt_init})
 
         if dossier_col_letter:
-            formule_prio = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${derniere_ligne_dcr}, ${dossier_col_letter}{start_prio + 1}, $A$1:$A${derniere_ligne_dcr}, "<>")>0'
+            formule_prio = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_prio + 1}, {plage_init}, "<>")>0'
         else:
             formule_prio = f'=$A{start_prio + 1}<>""'
         worksheet.conditional_format(start_prio, 0, end_prio, max_col - 1, {'type': 'formula', 'criteria': formule_prio, 'format': fmt_en_cours})
@@ -336,14 +340,14 @@ def ajouter_feuille_dcr(writer, df_prio, df_classique, nom_feuille, dict_initial
                     fmt_init = workbook.add_format({'bg_color': color_clean, 'font_color': '#000000'})
                     
                     if dossier_col_letter:
-                        f_classique_init = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${derniere_ligne_dcr}, ${dossier_col_letter}{start_classique + 1}, $A$1:$A${derniere_ligne_dcr}, "{init}")>0'
+                        f_classique_init = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_classique + 1}, {plage_init}, "{init}")>0'
                     else:
                         f_classique_init = f'=$A{start_classique + 1}="{init}"'
                         
                     worksheet.conditional_format(start_classique, 0, end_classique, max_col - 1, {'type': 'formula', 'criteria': f_classique_init, 'format': fmt_init})
 
             if dossier_col_letter:
-                formule_classique = f'=COUNTIFS(${dossier_col_letter}$1:${dossier_col_letter}${derniere_ligne_dcr}, ${dossier_col_letter}{start_classique + 1}, $A$1:$A${derniere_ligne_dcr}, "<>")>0'
+                formule_classique = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_classique + 1}, {plage_init}, "<>")>0'
             else:
                 formule_classique = f'=$A{start_classique + 1}<>""'
             worksheet.conditional_format(start_classique, 0, end_classique, max_col - 1, {'type': 'formula', 'criteria': formule_classique, 'format': fmt_en_cours})
