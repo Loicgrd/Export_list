@@ -233,12 +233,21 @@ with tab_generateur:
                     else:
                         config_colonnes[col] = st.column_config.DateColumn(col, format="DD/MM/YYYY")
 
-            with st.expander("🛠️ Afficher les dossiers de la file DCR et ajuster la liste prioritaire", expanded=True):
-                
-                # NOUVEAU : Une clé stable qui ne change pas à chaque clic. 
-                # Elle ne change que si vous modifiez la date limite globale.
-                static_key = f"editor_dcr_{date_prio}"
+            static_key = f"editor_dcr_{date_prio}"
 
+            # --- CALLBACK : déclenché immédiatement quand une case est cochée ---
+            def on_prio_change():
+                editor_state = st.session_state.get(static_key)
+                if editor_state and "edited_rows" in editor_state:
+                    for row_idx_str, changes in editor_state["edited_rows"].items():
+                        row_idx = int(row_idx_str)
+                        if "Prioritaire" in changes and 'Numéro dossier' in df_export.columns:
+                            num_dossier = df_export.iloc[row_idx]["Numéro dossier"]
+                            nouveau_statut = changes["Prioritaire"]
+                            st.session_state.prio_manuelle[num_dossier] = nouveau_statut
+            # -------------------------------------------------------
+
+            with st.expander("🛠️ Afficher les dossiers de la file DCR et ajuster la liste prioritaire", expanded=True):
                 df_export_modifie = st.data_editor(
                     df_export,
                     column_config=config_colonnes,
@@ -246,23 +255,9 @@ with tab_generateur:
                     hide_index=True,
                     use_container_width=True,
                     height=450,
-                    key=static_key 
+                    key=static_key,
+                    on_change=on_prio_change,
                 )
-
-            # --- DÉTECTION DU CLIC ET RAFRAÎCHISSEMENT ---
-            if 'Numéro dossier' in df_export.columns:
-                diff = df_export_modifie['Prioritaire'] != df_export['Prioritaire']
-                if diff.any():
-                    lignes_modifiees = df_export_modifie[diff]
-                    for _, row in lignes_modifiees.iterrows():
-                        num_dossier = row['Numéro dossier']
-                        nouveau_statut = row['Prioritaire']
-                        st.session_state.prio_manuelle[num_dossier] = nouveau_statut
-                    
-                    # On relance la page pour appliquer la modif aux doublons, 
-                    # mais le scroll sera conservé car la clé 'static_key' n'a pas changé !
-                    st.rerun()
-            # -------------------------------------------------------
 
             df_prio = df_export_modifie[df_export_modifie['Prioritaire']].drop(columns=['Prioritaire']).copy()
             df_classique = df_export_modifie[~df_export_modifie['Prioritaire']].drop(columns=['Prioritaire']).copy()
