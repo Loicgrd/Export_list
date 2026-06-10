@@ -225,6 +225,8 @@ with tab_generateur:
 
             with st.expander("🛠️ Afficher les dossiers de la file DCR et ajuster la liste prioritaire", expanded=True):
                 
+                st.info("💡 **Astuce :** Cochez une seule ligne d'un dossier. Le script passera automatiquement toutes les autres lignes du même dossier en prioritaire lors de l'export !")
+                
                 df_export_modifie = st.data_editor(
                     df_export,
                     column_config=config_colonnes,
@@ -235,8 +237,23 @@ with tab_generateur:
                     key=f"editor_dcr_{date_prio}" 
                 )
 
-            df_prio = df_export_modifie[df_export_modifie['Prioritaire']].drop(columns=['Prioritaire']).copy()
-            df_classique = df_export_modifie[~df_export_modifie['Prioritaire']].drop(columns=['Prioritaire']).copy()
+            # ---------------------------------------------------------
+            # NOUVELLE LOGIQUE : LIAISON PAR NUMÉRO DE DOSSIER (SANS RECHARGEMENT UI)
+            # ---------------------------------------------------------
+            if 'Numéro dossier' in df_export_modifie.columns:
+                # 1. On liste tous les "Numéro dossier" uniques qui ont au moins une ligne cochée
+                dossiers_coches = df_export_modifie[df_export_modifie['Prioritaire']]['Numéro dossier'].dropna().unique()
+                
+                # 2. Une ligne bascule en prioritaire si elle est cochée OU si son Numéro de dossier a été repéré
+                mask_prio_final = df_export_modifie['Prioritaire'] | df_export_modifie['Numéro dossier'].isin(dossiers_coches)
+            else:
+                # Sécurité si la colonne est absente
+                mask_prio_final = df_export_modifie['Prioritaire']
+
+            # 3. Séparation finale avec le masque global
+            df_prio = df_export_modifie[mask_prio_final].drop(columns=['Prioritaire']).copy()
+            df_classique = df_export_modifie[~mask_prio_final].drop(columns=['Prioritaire']).copy()
+            # ---------------------------------------------------------
             # ---------------------------------------------------------
 
             st.divider()
