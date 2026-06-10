@@ -224,7 +224,6 @@ with tab_generateur:
                         config_colonnes[col] = st.column_config.DateColumn(col, format="DD/MM/YYYY")
 
             with st.expander("🛠️ Afficher les dossiers de la file DCR et ajuster la liste prioritaire", expanded=True):
-                st.info("💡 **Astuce :** Vous pouvez cocher/décocher manuellement n'importe quelle ligne.\n\n📌 **Pour figer la colonne 'Prioritaire' pendant que vous allez vers la droite :** Passez votre souris sur l'en-tête '⭐ Prioritaire', cliquez sur les **3 petits points (⋮)** qui apparaissent, puis choisissez **'Pin column'**.")
                 
                 df_export_modifie = st.data_editor(
                     df_export,
@@ -261,7 +260,7 @@ with tab_generateur:
             
             c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("📈 DCR", f"{len(df_prio) + len(df_classique)} lignes")
-            c2.metric("🇫🇷 National", f"{len(df_national)} lignes")
+            c2.metric("📈 National", f"{len(df_national)} lignes")
             c3.metric("🛡️ ADMIN National", f"{len(df_admin_national)} lignes")
             c4.metric("🛡️ ADMIN DCR", f"{len(df_admin_dcr)} lignes")
             c5.metric("🏢 Confort", f"{len(df_confort)} lignes")
