@@ -13,7 +13,7 @@ from fonctions import (
     ajouter_feuille_formatee, 
     ajouter_feuille_dcr,       
     afficher_gestion_liste_bs,
-    afficher_gestion_initiales # <-- NOUVEAU
+    afficher_gestion_initiales
 )
 
 st.set_page_config(page_title="Générateur d'Exports CEE", layout="wide")
@@ -57,14 +57,12 @@ def load_liste_bs():
     except Exception as e:
         return {}, pd.DataFrame(columns=["SIREN", "Nom BS"])
 
-# --- NOUVEAU : Chargement des initiales ---
 @st.cache_data(ttl=30)
 def load_liste_initiales():
     try:
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Liste_initiales")
         if df.empty: return {}, pd.DataFrame(columns=["Initiales", "Couleur"])
         df_clean = df.copy().dropna(subset=["Initiales"])
-        # Renvoie un dictionnaire {"AB": "#FF0000"} et le DF brut pour l'éditeur
         return dict(zip(df_clean['Initiales'].astype(str).str.strip(), df_clean['Couleur'].astype(str).str.strip())), df
     except Exception as e:
         return {}, pd.DataFrame(columns=["Initiales", "Couleur"])
@@ -74,11 +72,10 @@ dict_confort, df_confort_gsheet = load_worksheet("Confort")
 dict_national, df_national_gsheet = load_worksheet("CDC") 
 mots_docs_admin, mots_coms_admin = load_admin()
 dict_bs_global, df_liste_bs_gsheet = load_liste_bs()
-dict_initiales, df_initiales_gsheet = load_liste_initiales() # <-- NOUVEAU
+dict_initiales, df_initiales_gsheet = load_liste_initiales() 
 
 st.title("Générateur d'Exports CEE")
 
-# LE DERNIER ONGLET EST RENOMMÉ "Paramètres"
 tab_generateur, tab_confort, tab_national, tab_admin, tab_parametres = st.tabs([
     "📊 Générateur", "⚙️ Base Confort", "⚙️ Base National", "🛡️ Filtres ADMIN", "⚙️ Paramètres"
 ])
@@ -86,7 +83,6 @@ tab_generateur, tab_confort, tab_national, tab_admin, tab_parametres = st.tabs([
 with tab_confort: afficher_gestion_base("Confort", df_confort_gsheet, conn, SPREADSHEET_URL, dict_bs_global)
 with tab_national: afficher_gestion_base("CDC", df_national_gsheet, conn, SPREADSHEET_URL, dict_bs_global)
 
-# --- NOUVEAU : Sous-onglets dans Paramètres ---
 with tab_parametres:
     st.header("⚙️ Paramètres globaux")
     sous_tab_bs, sous_tab_init = st.tabs(["🏢 Base BS ODICEE", "🎨 Gérer initiales"])
@@ -142,37 +138,46 @@ with tab_generateur:
             st.subheader("📅 Analyse et définition de la priorité (DCR)")
             date_prio = st.date_input("Dossiers reçus JUSQU'À cette date (incluse) = Prioritaires par défaut :", value=None, format="DD/MM/YYYY")
 
-            df_confort, df_national = pd.DataFrame(), pd.DataFrame()
+            # 1. On isole et retire Confort en premier
+            df_confort = pd.DataFrame()
             if 'Bénéficiaire' in df_source.columns:
                 df_confort = df_source[df_source['Bénéficiaire'].isin(dict_confort.keys())].copy()
-                df_national = df_source[df_source['Bénéficiaire'].isin(dict_national.keys())].copy()
 
-            df_export = df_source.copy()
-            if 'Numéro dossier' in df_export.columns:
-                if not df_confort.empty: df_export = df_export[~df_export['Numéro dossier'].isin(df_confort['Numéro dossier'])]
-                if not df_national.empty: df_export = df_export[~df_export['Numéro dossier'].isin(df_national['Numéro dossier'])]
+            df_reste = df_source.copy()
+            if 'Numéro dossier' in df_reste.columns and not df_confort.empty:
+                df_reste = df_reste[~df_reste['Numéro dossier'].isin(df_confort['Numéro dossier'])]
 
-            df_admin = pd.DataFrame()
+            # 2. On applique le filtre ADMIN sur TOUT le reste (National + DCR)
+            mask_admin = pd.Series(False, index=df_reste.index)
+            if 'Nom du document' in df_reste.columns and mots_docs_admin:
+                for mot in mots_docs_admin: mask_admin = mask_admin | df_reste['Nom du document'].astype(str).str.contains(mot, case=False, na=False, regex=False)
+            if 'Commentaire' in df_reste.columns and mots_coms_admin:
+                for mot in mots_coms_admin: mask_admin = mask_admin | df_reste['Commentaire'].astype(str).str.contains(mot, case=False, na=False, regex=False)
+            
+            df_admin = df_reste[mask_admin].copy()
+            df_sans_admin = df_reste[~mask_admin].copy()
+            
+            # 3. Séparation des ADMINs en ADMIN National et ADMIN DCR
             df_admin_national = pd.DataFrame()
             df_admin_dcr = pd.DataFrame()
-            mask_admin = pd.Series(False, index=df_export.index)
-            
-            if 'Nom du document' in df_export.columns and mots_docs_admin:
-                for mot in mots_docs_admin: mask_admin = mask_admin | df_export['Nom du document'].astype(str).str.contains(mot, case=False, na=False, regex=False)
-            if 'Commentaire' in df_export.columns and mots_coms_admin:
-                for mot in mots_coms_admin: mask_admin = mask_admin | df_export['Commentaire'].astype(str).str.contains(mot, case=False, na=False, regex=False)
-            
-            if mask_admin.any():
-                df_admin = df_export[mask_admin].copy()
-                df_export = df_export[~mask_admin] 
-                
-                if 'Bénéficiaire' in df_admin.columns:
-                    mask_admin_nat = df_admin['Bénéficiaire'].isin(dict_national.keys())
-                    df_admin_national = df_admin[mask_admin_nat].copy()
-                    df_admin_dcr = df_admin[~mask_admin_nat].copy()
-                else:
-                    df_admin_dcr = df_admin.copy()
+            if not df_admin.empty and 'Bénéficiaire' in df_admin.columns:
+                mask_admin_nat = df_admin['Bénéficiaire'].isin(dict_national.keys())
+                df_admin_national = df_admin[mask_admin_nat].copy()
+                df_admin_dcr = df_admin[~mask_admin_nat].copy()
+            else:
+                df_admin_dcr = df_admin.copy()
 
+            # 4. Séparation du reste (les normaux) en National et DCR
+            df_national = pd.DataFrame()
+            df_export = pd.DataFrame() # df_export deviendra la base DCR pure
+            if not df_sans_admin.empty and 'Bénéficiaire' in df_sans_admin.columns:
+                mask_nat = df_sans_admin['Bénéficiaire'].isin(dict_national.keys())
+                df_national = df_sans_admin[mask_nat].copy()
+                df_export = df_sans_admin[~mask_nat].copy()
+            else:
+                df_export = df_sans_admin.copy()
+
+            # 5. Fonction de tri général
             def trier_df(df):
                 cols_tri = []
                 if 'Date réception' in df.columns: cols_tri.append('Date réception')
@@ -219,7 +224,7 @@ with tab_generateur:
                         config_colonnes[col] = st.column_config.DateColumn(col, format="DD/MM/YYYY")
 
             with st.expander("🛠️ Afficher les dossiers de la file DCR et ajuster la liste prioritaire", expanded=True):
-                
+                st.info("💡 **Astuce :** Vous pouvez cocher/décocher manuellement n'importe quelle ligne.\n\n📌 **Pour figer la colonne 'Prioritaire' pendant que vous allez vers la droite :** Passez votre souris sur l'en-tête '⭐ Prioritaire', cliquez sur les **3 petits points (⋮)** qui apparaissent, puis choisissez **'Pin column'**.")
                 
                 df_export_modifie = st.data_editor(
                     df_export,
@@ -239,7 +244,6 @@ with tab_generateur:
             
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter', datetime_format='dd/mm/yyyy') as writer:
-                # NOUVEAU : On passe le dictionnaire des initiales aux fonctions
                 ajouter_feuille_dcr(writer, df_prio, df_classique, 'DCR', dict_initiales)
                 if not df_national.empty: ajouter_feuille_formatee(writer, df_national.drop(columns=['SIREN'], errors='ignore'), 'National', dict_initiales)
                 if not df_admin_national.empty: ajouter_feuille_formatee(writer, df_admin_national.drop(columns=['SIREN'], errors='ignore'), 'ADMIN National', dict_initiales)
