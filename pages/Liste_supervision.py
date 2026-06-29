@@ -3,10 +3,27 @@ import pandas as pd
 import io
 import zipfile
 import re
+from xlsxwriter.utility import xl_col_to_name
+from streamlit_gsheets import GSheetsConnection
 
 # Configuration de la page
 st.set_page_config(page_title="Tri Supervision ODICEE", layout="wide")
 st.title("Tri de la liste de supervision")
+
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1pkj6frncXmzUUVAClAWp63HY_UpQUahOCLz19w-UseI/edit?usp=sharing"
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+@st.cache_data(ttl=30)
+def load_liste_initiales():
+    try:
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Liste_initiales")
+        if df.empty: return {}
+        df_clean = df.copy().dropna(subset=["Initiales"])
+        return dict(zip(df_clean['Initiales'].astype(str).str.strip(), df_clean['Couleur'].astype(str).str.strip()))
+    except Exception:
+        return {}
+
+dict_initiales = load_liste_initiales()
 
 def lire_colonnes_numeriques_brutes(file_bytes, noms_colonnes_attendus):
     # Fonction de lecture XML (inchangée)
@@ -63,19 +80,30 @@ def lire_colonnes_numeriques_brutes(file_bytes, noms_colonnes_attendus):
 # Zone de dépôt des fichiers
 col1, col2 = st.columns(2)
 with col1:
-    file_odicee = st.file_uploader("1. Importer la supervision (ODICEE)", type=["xlsx", "csv"])
+    file_odicee = st.file_uploader(
+        "1. Importer la supervision (ODICEE)",
+        type=["xlsx", "csv"],
+        help="ODICEE / Pilotage / Dossiers au stade 3F.xlsx"
+    )
 with col2:
-    file_controle = st.file_uploader("2. Importer les paramètres (Export_Controle)", type=["xlsx", "csv"])
+    file_controle = st.file_uploader(
+        "2. Importer les paramètres (Export_Controle)",
+        type=["xlsx", "csv"],
+        help="ODICEE / Accueil / A Controler / Export_Controle_lots_de_travaux.xlsx"
+    )
 
-st.subheader("Paramètres de tri")
-st.write("**Conditions :** Définir l'intervalle pour la date de réalisation réelle")
+st.subheader("Paramètres de tri", help=(
+    "**1 - URGENCE** : Dossiers dont le passage en stade 3F remonte à plus d'un mois — triés du plus ancien au plus récent.\n\n"
+    "**2 - PRIORITÉ** : Dossiers dont la date de réalisation réelle tombe dans l'intervalle sélectionné, ou appartenant à un lot de contrôle 3F dont la première date de réalisation tombe dans cet intervalle — les dossiers d'un même lot sont regroupés ensemble et triés selon la date de réalisation la plus ancienne du lot, du plus ancien au plus récent.\n\n"
+    "**3 - Classique** : Dossiers ne répondant à aucun critère d'urgence ou de priorité — triés par date de réalisation réelle du plus ancien au plus récent."
+))
+st.markdown("**Conditions :** Définir l'intervalle pour la date de réalisation réelle", help="L'intervalle doit prendre en compte la date de réalisation des dossiers pour le prochain dépôt")
 col_date1, col_date2 = st.columns(2)
 with col_date1:
     date_debut = st.date_input("Date de début", value=None, format="DD/MM/YYYY")
 with col_date2:
     date_fin = st.date_input("Date de fin", value=None, format="DD/MM/YYYY")
 
-activer_xml = st.checkbox("🔧 Activer la correction XML des volumes kWhc", value=True)
 
 if file_odicee is not None and file_controle is not None:
     if st.button("🚀 Générer le fichier trié"):
@@ -115,7 +143,7 @@ if file_odicee is not None and file_controle is not None:
             progress_bar.progress(50)
 
             status_text.info("⏳ Étape 3 : Traitement des données...")
-            if activer_xml and not file_odicee.name.endswith('.csv'):
+            if not file_odicee.name.endswith('.csv'):
                 file_odicee.seek(0)
                 valeurs_brutes = lire_colonnes_numeriques_brutes(file_odicee, {col_volume_classique, col_volume_precarite})
                 file_odicee.seek(0)
@@ -139,6 +167,8 @@ if file_odicee is not None and file_controle is not None:
             mask_cond1 = df[col_stade_3f] < un_mois_avant
             df.loc[mask_cond1, 'Priorité_Tri'] = 1
 
+            df['_date_ref_lot'] = pd.NaT  # initialisé ici, rempli si lot trouvé
+
             if date_debut and date_fin:
                 start_dt = pd.to_datetime(date_debut)
                 end_dt = pd.to_datetime(date_fin)
@@ -160,11 +190,30 @@ if file_odicee is not None and file_controle is not None:
                     df['Temp_ID'] = df[col_odi_id].astype(str).str.strip()
                     mask_cond2bis = df['Temp_ID'].isin(dossiers_valides) & (df['Priorité_Tri'] != 1)
                     df.loc[mask_cond2bis, 'Priorité_Tri'] = 2
+
+                    # Date de référence du lot : date min du lot pour trier les dossiers groupés ensemble
+                    df_ctrl_3f_valides = df_ctrl_3f[df_ctrl_3f[col_ctr_lot].isin(lots_valides)][[col_ctr_id, col_ctr_lot]].copy()
+                    df_ctrl_3f_valides[col_ctr_id] = df_ctrl_3f_valides[col_ctr_id].astype(str).str.strip()
+                    dates_min_par_lot_valides = dates_min_par_lot[dates_min_par_lot[col_ctr_lot].isin(lots_valides)].rename(columns={col_ctr_date: '_date_ref_lot'})
+                    df_ctrl_3f_valides = df_ctrl_3f_valides.merge(dates_min_par_lot_valides[[col_ctr_lot, '_date_ref_lot']], on=col_ctr_lot, how='left')
+                    map_id_to_date_lot = dict(zip(df_ctrl_3f_valides[col_ctr_id], df_ctrl_3f_valides['_date_ref_lot']))
+                    df['_date_ref_lot'] = df['Temp_ID'].map(map_id_to_date_lot)
+
                     df.drop(columns=['Temp_ID'], inplace=True)
             progress_bar.progress(75)
 
             status_text.info("⏳ Étape 4 : Tri final...")
-            df_sorted = df.sort_values(by=['Priorité_Tri', 'Ordre_Import'], ascending=[True, True])
+
+            # Clé de tri secondaire pour le groupe 2 :
+            # - dossiers via lot → date min du lot (tous regroupés ensemble)
+            # - dossiers via date individuelle → leur propre date de réalisation
+            df['_sort_rea'] = df['_date_ref_lot'].fillna(df[col_rea])
+            df['_sort_stade_3f'] = df[col_stade_3f]
+
+            df_sorted = df.sort_values(
+                by=['Priorité_Tri', '_sort_stade_3f', '_sort_rea', 'Ordre_Import'],
+                ascending=[True, True, True, True]
+            ).drop(columns=['_sort_stade_3f', '_sort_rea', '_date_ref_lot'])
             
             df_sorted['Bandeau Priorité'] = df_sorted['Priorité_Tri'].map({
                 1: '1 - URGENCE (> 1 mois Stade 3F)',
@@ -193,19 +242,60 @@ if 'df_resultat' in st.session_state:
     st.write(f"**Aperçu des dossiers triés ({len(df_result)} lignes) :**")
     st.dataframe(df_result.head(20), use_container_width=True)
 
+    # Insertion colonne Initiales en position 0 (même logique qu'Export_liste)
+    df_export = df_result.copy()
+    if 'Initiales' not in df_export.columns:
+        df_export.insert(0, 'Initiales', '')
+
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_result.to_excel(writer, index=False, sheet_name='Supervision')
+        df_export.to_excel(writer, index=False, sheet_name='Supervision')
+        workbook  = writer.book
         worksheet = writer.sheets['Supervision']
-        for i, col in enumerate(df_result.columns):
-            def safe_len(val):
-                if pd.isna(val): return 0
-                return len(str(val))
-            max_data_len = df_result[col].map(safe_len).max()
+        max_row, max_col = df_export.shape
+
+        worksheet.freeze_panes(1, 0)
+        worksheet.autofilter(0, 0, max_row, max_col - 1)
+
+        # Largeur des colonnes
+        def safe_len(val):
+            if pd.isna(val): return 0
+            return len(str(val))
+        for i, col in enumerate(df_export.columns):
+            max_data_len = df_export[col].map(safe_len).max()
             if pd.isna(max_data_len): max_data_len = 0
-            
             column_len = max(int(max_data_len), len(str(col))) + 2
             worksheet.set_column(i, i, min(int(column_len), 40))
+
+        # Formatage conditionnel colonne Initiales (identique à fonctions.py)
+        if dict_initiales and max_row > 0:
+            dossier_col_letter = xl_col_to_name(df_export.columns.get_loc('Numéro du dossier')) if 'Numéro du dossier' in df_export.columns else None
+            total_lignes = max_row + 1
+            plage_dossier = f"${dossier_col_letter}$2:${dossier_col_letter}${total_lignes}" if dossier_col_letter else ""
+            plage_init = f"$A$2:$A${total_lignes}"
+
+            formats_init = {}
+            for init, color in dict_initiales.items():
+                color_clean = str(color).strip()
+                if color_clean and color_clean.lower() != 'nan':
+                    if not color_clean.startswith('#') and len(color_clean) == 6:
+                        color_clean = f"#{color_clean}"
+                    formats_init[init] = workbook.add_format({'bg_color': color_clean, 'font_color': '#000000'})
+
+            for init, fmt_init in formats_init.items():
+                if dossier_col_letter:
+                    formula = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}2, {plage_init}, "{init}")>0'
+                else:
+                    formula = f'=$A2="{init}"'
+                worksheet.conditional_format(1, 0, max_row, 2, {'type': 'formula', 'criteria': formula, 'format': fmt_init})
+
+            # Couleur par défaut si initiales renseignées mais non reconnues
+            fmt_en_cours = workbook.add_format({'bg_color': '#FFE699', 'font_color': '#595959'})
+            if dossier_col_letter:
+                formula_default = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}2, {plage_init}, "<>")>0'
+            else:
+                formula_default = '=$A2<>""'
+            worksheet.conditional_format(1, 0, max_row, 2, {'type': 'formula', 'criteria': formula_default, 'format': fmt_en_cours})
 
     output.seek(0)
     st.download_button(
