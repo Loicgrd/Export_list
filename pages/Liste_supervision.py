@@ -94,15 +94,12 @@ with col2:
 
 st.subheader("Paramètres de tri", help=(
     "**1 - URGENCE** : Dossiers dont le passage en stade 3F remonte à plus d'un mois — triés du plus ancien au plus récent.\n\n"
-    "**2 - PRIORITÉ** : Dossiers dont la date de réalisation réelle tombe dans l'intervalle sélectionné, ou appartenant à un lot de contrôle 3F dont la première date de réalisation tombe dans cet intervalle — les dossiers d'un même lot sont regroupés ensemble et triés selon la date de réalisation la plus ancienne du lot, du plus ancien au plus récent.\n\n"
+    "**2 - PRIORITÉ** : Dossiers dont la date de réalisation réelle est antérieure ou égale à la date de fin sélectionnée, ou appartenant à un lot de contrôle 3F dont la première date de réalisation est antérieure ou égale à cette date — les dossiers d'un même lot sont regroupés ensemble et triés selon la date de réalisation la plus ancienne du lot, du plus ancien au plus récent.\n\n"
     "**3 - Classique** : Dossiers ne répondant à aucun critère d'urgence ou de priorité — triés par date de réalisation réelle du plus ancien au plus récent."
 ))
-st.markdown("**Conditions :** Définir l'intervalle pour la date de réalisation réelle", help="L'intervalle doit prendre en compte la date de réalisation des dossiers pour le prochain dépôt")
-col_date1, col_date2 = st.columns(2)
-with col_date1:
-    date_debut = st.date_input("Date de début", value=None, format="DD/MM/YYYY")
-with col_date2:
-    date_fin = st.date_input("Date de fin", value=None, format="DD/MM/YYYY")
+st.markdown("**Conditions :** Définir la date limite de réalisation réelle (toutes les dates antérieures sont prises en compte)", help="L'intervalle doit prendre en compte la date de réalisation des dossiers pour le prochain dépôt")
+date_fin = st.date_input("Date de fin", value=None, format="DD/MM/YYYY")
+date_debut = None
 
 
 if file_odicee is not None and file_controle is not None:
@@ -169,12 +166,11 @@ if file_odicee is not None and file_controle is not None:
 
             df['_date_ref_lot'] = pd.NaT  # initialisé ici, rempli si lot trouvé
 
-            if date_debut and date_fin:
-                start_dt = pd.to_datetime(date_debut)
+            if date_fin:
                 end_dt = pd.to_datetime(date_fin)
                 
-                # Condition 2
-                mask_cond2 = (df[col_rea] >= start_dt) & (df[col_rea] <= end_dt) & (df['Priorité_Tri'] != 1) 
+                # Condition 2 : toutes les dates de réalisation jusqu'à la date de fin
+                mask_cond2 = (df[col_rea] <= end_dt) & (df['Priorité_Tri'] != 1) 
                 df.loc[mask_cond2, 'Priorité_Tri'] = 2
 
                 # Condition 2bis (Lots)
@@ -182,8 +178,7 @@ if file_odicee is not None and file_controle is not None:
                 if not df_ctrl_3f.empty:
                     dates_min_par_lot = df_ctrl_3f.groupby(col_ctr_lot)[col_ctr_date].min().reset_index()
                     lots_valides = dates_min_par_lot[
-                        (dates_min_par_lot[col_ctr_date] >= start_dt) & 
-                        (dates_min_par_lot[col_ctr_date] <= end_dt)
+                        dates_min_par_lot[col_ctr_date] <= end_dt
                     ][col_ctr_lot]
                     
                     dossiers_valides = df_ctrl_3f[df_ctrl_3f[col_ctr_lot].isin(lots_valides)][col_ctr_id].astype(str).str.strip()
