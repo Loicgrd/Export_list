@@ -199,16 +199,22 @@ if file_odicee is not None and file_controle is not None:
 
             status_text.info("⏳ Étape 4 : Tri final...")
 
-            # Clé de tri secondaire pour le groupe 2 :
-            # - dossiers via lot → date min du lot (tous regroupés ensemble)
-            # - dossiers via date individuelle → leur propre date de réalisation
+            # Clé de tri unique selon le groupe de priorité :
+            # - Groupe 1 (URGENCE)   : trié par date stade 3F (plus ancien -> plus récent)
+            # - Groupe 2 (PRIORITÉ)  : trié par date de réalisation (date min du lot si applicable,
+            #                          sinon date de réalisation individuelle)
+            # - Groupe 99 (Classique): trié par date de réalisation réelle
+            # Avant cette correction, le tri utilisait 'Date stade 3F' comme clé principale pour
+            # TOUS les groupes, reléguant la date de réalisation en critère secondaire — ce qui
+            # contredisait le tri par date de réalisation annoncé pour les groupes 2 et 99.
             df['_sort_rea'] = df['_date_ref_lot'].fillna(df[col_rea])
-            df['_sort_stade_3f'] = df[col_stade_3f]
+            df['_sort_key'] = df['_sort_rea']
+            df.loc[df['Priorité_Tri'] == 1, '_sort_key'] = df.loc[df['Priorité_Tri'] == 1, col_stade_3f]
 
             df_sorted = df.sort_values(
-                by=['Priorité_Tri', '_sort_stade_3f', '_sort_rea', 'Ordre_Import'],
-                ascending=[True, True, True, True]
-            ).drop(columns=['_sort_stade_3f', '_sort_rea', '_date_ref_lot'])
+                by=['Priorité_Tri', '_sort_key', 'Ordre_Import'],
+                ascending=[True, True, True]
+            ).drop(columns=['_sort_key', '_sort_rea', '_date_ref_lot'])
             
             df_sorted['Bandeau Priorité'] = df_sorted['Priorité_Tri'].map({
                 1: '1 - URGENCE (> 1 mois Stade 3F)',
