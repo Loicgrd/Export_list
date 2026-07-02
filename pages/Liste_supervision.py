@@ -174,7 +174,15 @@ if file_odicee is not None and file_controle is not None:
                 df.loc[mask_cond2, 'Priorité_Tri'] = 2
 
                 # Condition 2bis (Lots)
-                df_ctrl_3f = df_ctrl[df_ctrl[col_ctr_stade].astype(str).str.contains('3F', case=False, na=False)].copy()
+                # "NEANT" dans la colonne Lot de contrôle signifie qu'il n'y a PAS de vrai lot —
+                # ce n'est pas un identifiant de regroupement. Sans cette exclusion, tous les
+                # dossiers marqués NEANT seraient groupés ensemble par erreur (le groupby les
+                # traite comme un lot unique), leur donnant tous la même date de tri minimale
+                # alors qu'ils n'ont aucun rapport entre eux.
+                df_ctrl_3f = df_ctrl[
+                    df_ctrl[col_ctr_stade].astype(str).str.contains('3F', case=False, na=False)
+                    & (df_ctrl[col_ctr_lot].astype(str).str.strip().str.upper() != 'NEANT')
+                ].copy()
                 if not df_ctrl_3f.empty:
                     dates_min_par_lot = df_ctrl_3f.groupby(col_ctr_lot)[col_ctr_date].min().reset_index()
                     lots_valides = dates_min_par_lot[
