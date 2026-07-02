@@ -98,7 +98,7 @@ st.subheader("Paramètres de tri", help=(
     "**3 - Classique** : Dossiers ne répondant à aucun critère d'urgence ou de priorité — triés par date de réalisation réelle du plus ancien au plus récent."
 ))
 st.markdown("**Conditions :** Définir la date limite de réalisation réelle (toutes les dates antérieures sont prises en compte)", help="L'intervalle doit prendre en compte la date de réalisation des dossiers pour le prochain dépôt")
-date_fin = st.date_input("Date de fin", value=None, format="DD/MM/YYYY")
+date_fin = st.date_input("Date de fin", value=pd.Timestamp.today().date(), format="DD/MM/YYYY")
 date_debut = None
 
 
