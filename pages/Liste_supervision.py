@@ -25,6 +25,142 @@ def load_liste_initiales():
 
 dict_initiales = load_liste_initiales()
 
+@st.cache_data(ttl=10)
+def load_worksheet_bailleurs(sheet_name):
+    """Charge une base de bailleurs (Confort ou CDC) depuis Google Sheets.
+    Retourne un dict {Raison sociale: SIREN} — la clé sert à comparer avec
+    'Raison sociale du bénéficiaire' pour router chaque dossier vers la bonne feuille."""
+    try:
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name)
+        if df.empty or len(df.columns) < 2:
+            return {}
+        df = df.dropna(subset=[df.columns[0]])
+        return dict(zip(df.iloc[:, 0], df.iloc[:, 1].astype(str)))
+    except Exception:
+        return {}
+
+dict_confort = load_worksheet_bailleurs("Confort")
+dict_national = load_worksheet_bailleurs("CDC")
+
+def ajouter_feuille_avec_bandeau(writer, df_prio, df_classique, nom_feuille, dict_initiales=None, dossier_col_nom='Numéro du dossier'):
+    """Écrit une feuille Excel avec un bandeau rouge encadrant les dossiers prioritaires
+    (Priorité 1 - URGENCE et 2 - PRIORITÉ), suivis des dossiers classiques (Priorité 3).
+    Contrairement à fonctions.ajouter_feuille_dcr, le bandeau est TOUJOURS affiché même sans
+    aucun dossier prioritaire (avec une ligne vide pour ajout manuel), et il n'y a pas de bandeau
+    secondaire "Puis basculer sur DCR" — ce texte n'a de sens que pour la feuille DCR d'origine
+    de l'app Export_liste, pas pour un usage générique multi-feuilles."""
+    if dict_initiales is None:
+        dict_initiales = {}
+    if df_prio.empty and df_classique.empty:
+        return
+
+    colonnes = df_classique.columns.tolist() if not df_classique.empty else df_prio.columns.tolist()
+
+    if not df_prio.empty and 'Initiales' not in df_prio.columns:
+        df_prio.insert(0, 'Initiales', '')
+    if not df_classique.empty and 'Initiales' not in df_classique.columns:
+        df_classique.insert(0, 'Initiales', '')
+
+    # 'Bandeau Priorité' toujours en dernière colonne
+    colonnes_finales = [c for c in colonnes if c != 'Bandeau Priorité']
+    if 'Bandeau Priorité' in colonnes:
+        colonnes_finales.append('Bandeau Priorité')
+    if not df_prio.empty:
+        df_prio = df_prio[colonnes_finales]
+    if not df_classique.empty:
+        df_classique = df_classique[colonnes_finales]
+
+    dossier_col_letter = None
+    if dossier_col_nom in colonnes_finales:
+        dossier_col_letter = xl_col_to_name(colonnes_finales.index(dossier_col_nom))
+
+    workbook = writer.book
+    worksheet = workbook.add_worksheet(nom_feuille)
+    worksheet.freeze_panes(2, 0)
+
+    fmt_rouge = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': 'red', 'align': 'center', 'valign': 'vcenter'})
+    fmt_header = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#F2F2F2'})
+    fmt_en_cours = workbook.add_format({'bg_color': '#FFE699', 'font_color': '#595959'})
+
+    current_row = 0
+    max_col = len(colonnes_finales)
+
+    nb_lignes_prio = len(df_prio) if not df_prio.empty else 1  # 1 ligne vide si pas de prioritaires
+    first_data_row_excel = 3
+    last_data_row_excel = nb_lignes_prio + len(df_classique) + 5
+    plage_dossier = f"${dossier_col_letter}${first_data_row_excel}:${dossier_col_letter}${last_data_row_excel}" if dossier_col_letter else ""
+    plage_init = f"$A${first_data_row_excel}:$A${last_data_row_excel}"
+
+    formats_init = {}
+    for init, color in dict_initiales.items():
+        color_clean = str(color).strip()
+        if color_clean and color_clean.lower() != 'nan':
+            if not color_clean.startswith('#') and len(color_clean) == 6:
+                color_clean = f"#{color_clean}"
+            formats_init[init] = workbook.add_format({'bg_color': color_clean, 'font_color': '#000000'})
+
+    # --- Bandeau prioritaire : toujours affiché, même vide ---
+    worksheet.merge_range(current_row, 0, current_row, max_col - 1, "↓ /!\\ Liste prioritaire /!\\ ↓", fmt_rouge)
+    current_row += 1
+    for i, val in enumerate(colonnes_finales):
+        worksheet.write(current_row, i, val, fmt_header)
+    current_row += 1
+    start_prio = current_row
+
+    if not df_prio.empty:
+        df_prio.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
+        end_prio = current_row + len(df_prio) - 1
+        current_row += len(df_prio)
+    else:
+        # Ligne vide pour ajout manuel si aucun dossier prioritaire
+        end_prio = current_row
+        current_row += 1
+
+    for init, fmt_init in formats_init.items():
+        if dossier_col_letter:
+            f_prio_init = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_prio + 1}, {plage_init}, "{init}")>0'
+        else:
+            f_prio_init = f'=$A{start_prio + 1}="{init}"'
+        worksheet.conditional_format(start_prio, 0, end_prio, 2, {'type': 'formula', 'criteria': f_prio_init, 'format': fmt_init})
+
+    if dossier_col_letter:
+        formule_prio = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_prio + 1}, {plage_init}, "<>")>0'
+    else:
+        formule_prio = f'=$A{start_prio + 1}<>""'
+    worksheet.conditional_format(start_prio, 0, end_prio, 2, {'type': 'formula', 'criteria': formule_prio, 'format': fmt_en_cours})
+
+    worksheet.merge_range(current_row, 0, current_row, max_col - 1, "↑ /!\\ Liste prioritaire /!\\ ↑", fmt_rouge)
+    current_row += 1
+
+    # --- Dossiers classiques (Priorité 3) ---
+    ligne_entete_classique = current_row
+    for i, val in enumerate(colonnes_finales):
+        worksheet.write(current_row, i, val, fmt_header)
+    current_row += 1
+
+    if not df_classique.empty:
+        start_classique = current_row
+        df_classique.to_excel(writer, sheet_name=nom_feuille, startrow=current_row, header=False, index=False)
+        end_classique = current_row + len(df_classique) - 1
+
+        for init, fmt_init in formats_init.items():
+            if dossier_col_letter:
+                f_classique_init = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_classique + 1}, {plage_init}, "{init}")>0'
+            else:
+                f_classique_init = f'=$A{start_classique + 1}="{init}"'
+            worksheet.conditional_format(start_classique, 0, end_classique, 2, {'type': 'formula', 'criteria': f_classique_init, 'format': fmt_init})
+
+        if dossier_col_letter:
+            formule_classique = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}{start_classique + 1}, {plage_init}, "<>")>0'
+        else:
+            formule_classique = f'=$A{start_classique + 1}<>""'
+        worksheet.conditional_format(start_classique, 0, end_classique, 2, {'type': 'formula', 'criteria': formule_classique, 'format': fmt_en_cours})
+        worksheet.autofilter(ligne_entete_classique, 0, end_classique, max_col - 1)
+
+    for i in range(max_col):
+        worksheet.set_column(i, i, 16)
+
+
 def lire_colonnes_numeriques_brutes(file_bytes, noms_colonnes_attendus):
     # Fonction de lecture XML (inchangée)
     resultats = {}
@@ -235,7 +371,7 @@ if file_odicee is not None and file_controle is not None:
             })
             
             cols = df_sorted.columns.tolist()
-            cols.insert(0, cols.pop(cols.index('Bandeau Priorité')))
+            cols.append(cols.pop(cols.index('Bandeau Priorité')))
             df_sorted = df_sorted[cols].drop(columns=['Priorité_Tri', 'Ordre_Import'])
 
             df_sorted[col_stade_3f] = df_sorted[col_stade_3f].dt.strftime('%d/%m/%Y')
@@ -255,60 +391,43 @@ if 'df_resultat' in st.session_state:
     st.write(f"**Aperçu des dossiers triés ({len(df_result)} lignes) :**")
     st.dataframe(df_result.head(20), use_container_width=True)
 
-    # Insertion colonne Initiales en position 0 (même logique qu'Export_liste)
-    df_export = df_result.copy()
-    if 'Initiales' not in df_export.columns:
-        df_export.insert(0, 'Initiales', '')
+    col_beneficiaire = 'Raison sociale du bénéficiaire'
+
+    # ─────────────────────────────────────────────
+    # Routage vers Confort / National / DCR selon la raison sociale du bénéficiaire
+    # (même logique et même ordre de priorité que l'app Export_liste : Confort d'abord,
+    # puis National sur le reste, le solde va sur DCR)
+    # ─────────────────────────────────────────────
+    if col_beneficiaire in df_result.columns:
+        mask_confort = df_result[col_beneficiaire].isin(dict_confort.keys())
+        df_confort = df_result[mask_confort].copy()
+        df_reste = df_result[~mask_confort].copy()
+
+        mask_national = df_reste[col_beneficiaire].isin(dict_national.keys())
+        df_national = df_reste[mask_national].copy()
+        df_dcr = df_reste[~mask_national].copy()
+    else:
+        st.warning(f"⚠️ Colonne '{col_beneficiaire}' introuvable — tous les dossiers restent sur la feuille DCR.")
+        df_confort = pd.DataFrame(columns=df_result.columns)
+        df_national = pd.DataFrame(columns=df_result.columns)
+        df_dcr = df_result.copy()
+
+    def split_prio_classique(df):
+        """Sépare un DataFrame en (prioritaires [1+2], classiques [3]) selon 'Bandeau Priorité'."""
+        if df.empty or 'Bandeau Priorité' not in df.columns:
+            return df.iloc[0:0].copy(), df.copy()
+        mask_prio = df['Bandeau Priorité'].str.startswith(('1', '2'))
+        return df[mask_prio].copy(), df[~mask_prio].copy()
+
+    dcr_prio, dcr_classique = split_prio_classique(df_dcr)
+    national_prio, national_classique = split_prio_classique(df_national)
+    confort_prio, confort_classique = split_prio_classique(df_confort)
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df_export.to_excel(writer, index=False, sheet_name='Supervision')
-        workbook  = writer.book
-        worksheet = writer.sheets['Supervision']
-        max_row, max_col = df_export.shape
-
-        worksheet.freeze_panes(1, 0)
-        worksheet.autofilter(0, 0, max_row, max_col - 1)
-
-        # Largeur des colonnes
-        def safe_len(val):
-            if pd.isna(val): return 0
-            return len(str(val))
-        for i, col in enumerate(df_export.columns):
-            max_data_len = df_export[col].map(safe_len).max()
-            if pd.isna(max_data_len): max_data_len = 0
-            column_len = max(int(max_data_len), len(str(col))) + 2
-            worksheet.set_column(i, i, min(int(column_len), 40))
-
-        # Formatage conditionnel colonne Initiales (identique à fonctions.py)
-        if dict_initiales and max_row > 0:
-            dossier_col_letter = xl_col_to_name(df_export.columns.get_loc('Numéro du dossier')) if 'Numéro du dossier' in df_export.columns else None
-            total_lignes = max_row + 1
-            plage_dossier = f"${dossier_col_letter}$2:${dossier_col_letter}${total_lignes}" if dossier_col_letter else ""
-            plage_init = f"$A$2:$A${total_lignes}"
-
-            formats_init = {}
-            for init, color in dict_initiales.items():
-                color_clean = str(color).strip()
-                if color_clean and color_clean.lower() != 'nan':
-                    if not color_clean.startswith('#') and len(color_clean) == 6:
-                        color_clean = f"#{color_clean}"
-                    formats_init[init] = workbook.add_format({'bg_color': color_clean, 'font_color': '#000000'})
-
-            for init, fmt_init in formats_init.items():
-                if dossier_col_letter:
-                    formula = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}2, {plage_init}, "{init}")>0'
-                else:
-                    formula = f'=$A2="{init}"'
-                worksheet.conditional_format(1, 0, max_row, 2, {'type': 'formula', 'criteria': formula, 'format': fmt_init})
-
-            # Couleur par défaut si initiales renseignées mais non reconnues
-            fmt_en_cours = workbook.add_format({'bg_color': '#FFE699', 'font_color': '#595959'})
-            if dossier_col_letter:
-                formula_default = f'=COUNTIFS({plage_dossier}, ${dossier_col_letter}2, {plage_init}, "<>")>0'
-            else:
-                formula_default = '=$A2<>""'
-            worksheet.conditional_format(1, 0, max_row, 2, {'type': 'formula', 'criteria': formula_default, 'format': fmt_en_cours})
+        ajouter_feuille_avec_bandeau(writer, dcr_prio, dcr_classique, 'DCR', dict_initiales)
+        ajouter_feuille_avec_bandeau(writer, national_prio, national_classique, 'National', dict_initiales)
+        ajouter_feuille_avec_bandeau(writer, confort_prio, confort_classique, 'Confort', dict_initiales)
 
     output.seek(0)
     nom_fichier = f"Liste_Supervision_{pd.Timestamp.today().strftime('%Y-%m-%d')}.xlsx"
@@ -318,3 +437,8 @@ if 'df_resultat' in st.session_state:
         file_name=nom_fichier,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("📄 DCR", f"{len(df_dcr)} lignes")
+    c2.metric("🇫🇷 National", f"{len(df_national)} lignes")
+    c3.metric("🏢 Confort", f"{len(df_confort)} lignes")
