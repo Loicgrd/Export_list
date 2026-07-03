@@ -54,12 +54,15 @@ def ajouter_feuille_avec_bandeau(writer, df_prio, df_classique, nom_feuille, dic
     if df_prio.empty and df_classique.empty:
         return
 
-    colonnes = df_classique.columns.tolist() if not df_classique.empty else df_prio.columns.tolist()
-
-    if not df_prio.empty and 'Initiales' not in df_prio.columns:
+    # Insertion de la colonne 'Initiales' en position 0 AVANT de figer la liste des colonnes
+    # (bug précédent : la liste était lue avant l'insertion, donc 'Initiales' disparaissait
+    # de l'export et la coloration par initiale ne fonctionnait plus).
+    if 'Initiales' not in df_prio.columns:
         df_prio.insert(0, 'Initiales', '')
-    if not df_classique.empty and 'Initiales' not in df_classique.columns:
+    if 'Initiales' not in df_classique.columns:
         df_classique.insert(0, 'Initiales', '')
+
+    colonnes = df_classique.columns.tolist() if not df_classique.empty else df_prio.columns.tolist()
 
     # 'Bandeau Priorité' toujours en dernière colonne
     colonnes_finales = [c for c in colonnes if c != 'Bandeau Priorité']
