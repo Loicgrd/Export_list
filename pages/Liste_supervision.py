@@ -194,12 +194,16 @@ if file_odicee is not None and file_controle is not None:
                     mask_cond2bis = df['Temp_ID'].isin(dossiers_valides) & (df['Priorité_Tri'] != 1)
                     df.loc[mask_cond2bis, 'Priorité_Tri'] = 2
 
-                    # Date de référence du lot : date min du lot pour trier les dossiers groupés ensemble
+                    # Date de référence du lot : date min du lot pour trier les dossiers groupés ensemble.
+                    # Un dossier peut apparaître dans PLUSIEURS lots de contrôle différents (une fiche/lot
+                    # de travaux par lot). Avant cette correction, dict(zip(...)) retenait arbitrairement
+                    # le dernier lot rencontré dans l'ordre du fichier — pas nécessairement le plus ancien.
+                    # On prend maintenant systématiquement la date la plus ancienne parmi tous ses lots.
                     df_ctrl_3f_valides = df_ctrl_3f[df_ctrl_3f[col_ctr_lot].isin(lots_valides)][[col_ctr_id, col_ctr_lot]].copy()
                     df_ctrl_3f_valides[col_ctr_id] = df_ctrl_3f_valides[col_ctr_id].astype(str).str.strip()
                     dates_min_par_lot_valides = dates_min_par_lot[dates_min_par_lot[col_ctr_lot].isin(lots_valides)].rename(columns={col_ctr_date: '_date_ref_lot'})
                     df_ctrl_3f_valides = df_ctrl_3f_valides.merge(dates_min_par_lot_valides[[col_ctr_lot, '_date_ref_lot']], on=col_ctr_lot, how='left')
-                    map_id_to_date_lot = dict(zip(df_ctrl_3f_valides[col_ctr_id], df_ctrl_3f_valides['_date_ref_lot']))
+                    map_id_to_date_lot = df_ctrl_3f_valides.groupby(col_ctr_id)['_date_ref_lot'].min().to_dict()
                     df['_date_ref_lot'] = df['Temp_ID'].map(map_id_to_date_lot)
 
                     df.drop(columns=['Temp_ID'], inplace=True)
