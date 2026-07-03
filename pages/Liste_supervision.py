@@ -93,12 +93,13 @@ with col2:
     )
 
 st.subheader("Paramètres de tri", help=(
-    "**1 - URGENCE** : Dossiers dont le passage en stade 3F remonte à plus d'un mois — triés du plus ancien au plus récent.\n\n"
+    "**1 - URGENCE** : Dossiers dont le passage en stade 3F remonte à plus de 25 jours — triés du plus ancien au plus récent.\n\n"
     "**2 - PRIORITÉ** : Dossiers dont la date de réalisation réelle est antérieure ou égale à la date de fin sélectionnée, ou appartenant à un lot de contrôle 3F dont la première date de réalisation est antérieure ou égale à cette date — les dossiers d'un même lot sont regroupés ensemble et triés selon la date de réalisation la plus ancienne du lot, du plus ancien au plus récent.\n\n"
     "**3 - Classique** : Dossiers ne répondant à aucun critère d'urgence ou de priorité — triés par date de réalisation réelle du plus ancien au plus récent."
 ))
 st.markdown("**Conditions :** Définir la date limite de réalisation réelle (toutes les dates antérieures sont prises en compte)", help="L'intervalle doit prendre en compte la date de réalisation des dossiers pour le prochain dépôt")
-date_fin = st.date_input("Date de fin", value=pd.Timestamp.today().date(), format="DD/MM/YYYY")
+date_fin_defaut = pd.Timestamp.today() - pd.DateOffset(months=11)
+date_fin = st.date_input("Date de fin", value=date_fin_defaut.date(), format="DD/MM/YYYY")
 date_debut = None
 
 
@@ -158,10 +159,10 @@ if file_odicee is not None and file_controle is not None:
 
             # TRI & CONDITIONS
             df['Priorité_Tri'] = 99
-            un_mois_avant = pd.Timestamp.today() - pd.DateOffset(months=1)
+            seuil_urgence = pd.Timestamp.today() - pd.Timedelta(days=25)
             
             # Condition 1
-            mask_cond1 = df[col_stade_3f] < un_mois_avant
+            mask_cond1 = df[col_stade_3f] < seuil_urgence
             df.loc[mask_cond1, 'Priorité_Tri'] = 1
 
             df['_date_ref_lot'] = pd.NaT  # initialisé ici, rempli si lot trouvé
@@ -229,8 +230,8 @@ if file_odicee is not None and file_controle is not None:
             ).drop(columns=['_sort_key', '_sort_rea', '_date_ref_lot'])
             
             df_sorted['Bandeau Priorité'] = df_sorted['Priorité_Tri'].map({
-                1: '1 - URGENCE (> 1 mois Stade 3F)',
-                2: '2 - PRIORITÉ (Réalisation)',
+                1: '1 - URGENCE (> 25 jours Stade 3F)',
+                2: '2 - PRIORITÉ (Date de réalisation ou Lot)',
                 99: '3 - Classique'
             })
             
@@ -311,9 +312,10 @@ if 'df_resultat' in st.session_state:
             worksheet.conditional_format(1, 0, max_row, 2, {'type': 'formula', 'criteria': formula_default, 'format': fmt_en_cours})
 
     output.seek(0)
+    nom_fichier = f"Liste_Supervision_{pd.Timestamp.today().strftime('%Y-%m-%d')}.xlsx"
     st.download_button(
         label="📥 Télécharger l'Excel trié",
         data=output,
-        file_name="Supervision_Triee.xlsx",
+        file_name=nom_fichier,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
