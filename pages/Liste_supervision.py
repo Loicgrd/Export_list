@@ -230,7 +230,7 @@ if file_odicee is not None and file_controle is not None:
             
             df_sorted['Bandeau Priorité'] = df_sorted['Priorité_Tri'].map({
                 1: '1 - URGENCE (> 25 jours Stade 3F)',
-                2: '2 - PRIORITÉ (Réalisation)',
+                2: '2 - PRIORITÉ (Date de réalisation ou Lot)',
                 99: '3 - Classique'
             })
             
