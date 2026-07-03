@@ -95,7 +95,7 @@ with col2:
 st.subheader("Paramètres de tri", help=(
     "**1 - URGENCE** : Dossiers dont le passage en stade 3F remonte à plus de 25 jours — triés du plus ancien au plus récent.\n\n"
     "**2 - PRIORITÉ** : Dossiers dont la date de réalisation réelle est antérieure ou égale à la date de fin sélectionnée, ou appartenant à un lot de contrôle 3F dont la première date de réalisation est antérieure ou égale à cette date — les dossiers d'un même lot sont regroupés ensemble et triés selon la date de réalisation la plus ancienne du lot, du plus ancien au plus récent.\n\n"
-    "**3 - Classique** : Dossiers ne répondant à aucun critère d'urgence ou de priorité — triés par date de réalisation réelle du plus ancien au plus récent."
+    "**3 - Classique** : Dossiers ne répondant à aucun critère d'urgence ou de priorité — triés par date stade 3F du plus ancien au plus récent (même ordre que l'export ODICEE stade 3F d'origine)."
 ))
 st.markdown("**Conditions :** Définir la date limite de réalisation réelle (toutes les dates antérieures sont prises en compte)", help="L'intervalle doit prendre en compte la date de réalisation des dossiers pour le prochain dépôt")
 date_fin_defaut = pd.Timestamp.today() - pd.DateOffset(months=11)
@@ -216,13 +216,12 @@ if file_odicee is not None and file_controle is not None:
             # - Groupe 1 (URGENCE)   : trié par date stade 3F (plus ancien -> plus récent)
             # - Groupe 2 (PRIORITÉ)  : trié par date de réalisation (date min du lot si applicable,
             #                          sinon date de réalisation individuelle)
-            # - Groupe 99 (Classique): trié par date de réalisation réelle
-            # Avant cette correction, le tri utilisait 'Date stade 3F' comme clé principale pour
-            # TOUS les groupes, reléguant la date de réalisation en critère secondaire — ce qui
-            # contredisait le tri par date de réalisation annoncé pour les groupes 2 et 99.
+            # - Groupe 99 (Classique): trié par date stade 3F (même ordre que l'export ODICEE
+            #                          stade 3F d'origine) — PAS par date de réalisation
             df['_sort_rea'] = df['_date_ref_lot'].fillna(df[col_rea])
             df['_sort_key'] = df['_sort_rea']
             df.loc[df['Priorité_Tri'] == 1, '_sort_key'] = df.loc[df['Priorité_Tri'] == 1, col_stade_3f]
+            df.loc[df['Priorité_Tri'] == 99, '_sort_key'] = df.loc[df['Priorité_Tri'] == 99, col_stade_3f]
 
             df_sorted = df.sort_values(
                 by=['Priorité_Tri', '_sort_key', 'Ordre_Import'],
