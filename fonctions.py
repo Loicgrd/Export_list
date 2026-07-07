@@ -1,12 +1,34 @@
 import streamlit as st
 import pandas as pd
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from xlsxwriter.utility import xl_col_to_name
 import re
+from jours_feries_france import JoursFeries
 
 TZ_FRANCE = pytz.timezone('Europe/Paris')
+
+
+def get_n_derniers_jours_ouvres(date_reference, n=5):
+    """Retourne les n derniers jours ouvrés (hors week-ends et jours fériés FR)
+    se terminant à date_reference (incluse si elle est ouvrée)."""
+    jours_ouvres = []
+    jour_courant = date_reference
+
+    # Jours fériés sur l'année en cours + précédente (au cas où on est début janvier)
+    annees = {date_reference.year, date_reference.year - 1}
+    feries = set()
+    for annee in annees:
+        feries.update(JoursFeries.for_year(annee).values())
+
+    while len(jours_ouvres) < n:
+        # lundi=0 ... dimanche=6 -> on exclut samedi(5)/dimanche(6) et jours fériés
+        if jour_courant.weekday() < 5 and jour_courant not in feries:
+            jours_ouvres.append(jour_courant)
+        jour_courant -= timedelta(days=1)
+
+    return jours_ouvres  # liste de dates, du plus récent au plus ancien
 
 # ==========================================
 # FONCTIONS DE GESTION DES BASES (Google Sheets)
@@ -194,14 +216,24 @@ def afficher_tableau_synthese(df, titre):
         df_synth = df.dropna(subset=['Date réception']).copy()
         if df_synth.empty: return
         st.markdown(f"**{titre}**")
-        df_synth['Date réception'] = pd.to_datetime(df_synth['Date réception']).dt.date
+        df_synth['Date réception'] = pd.to_datetime(df_synth['Date réception'], dayfirst=True).dt.date
         df_synth['DCR'] = df_synth['DCR'].fillna('Non renseigné')
         
         tableau = pd.crosstab(index=df_synth['Date réception'], columns=df_synth['DCR'], margins=True, margins_name='Total')
         tableau_final = pd.concat([tableau.drop('Total').sort_index(ascending=True), tableau.loc[['Total']]])
-        tableau_final.index = [idx if isinstance(idx, str) else idx.strftime('%d/%m/%Y') for idx in tableau_final.index]
 
-        top_5_dates = [d for d in tableau_final.index if d != 'Total'][-5:]
+        # --- Plage "dans les délais" = du 5ème jour OUVRÉ en arrière jusqu'à AUJOURD'HUI ---
+        # (bornes incluses, week-ends et jours fériés compris dans la plage : un dossier reçu
+        # un samedi/dimanche reste "dans les délais" s'il tombe dans cette fenêtre)
+        date_du_jour = datetime.now(TZ_FRANCE).date()
+        jours_ouvres = get_n_derniers_jours_ouvres(date_du_jour, n=5)
+        borne_min = min(jours_ouvres)  # le 5ème jour ouvré, le plus ancien de la fenêtre
+        top_5_dates = {
+            (borne_min + timedelta(days=i)).strftime('%d/%m/%Y')
+            for i in range((date_du_jour - borne_min).days + 1)
+        }
+
+        tableau_final.index = [idx if isinstance(idx, str) else idx.strftime('%d/%m/%Y') for idx in tableau_final.index]
 
         def coloriser_delais(row):
             styles = []

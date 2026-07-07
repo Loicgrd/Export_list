@@ -6,4 +6,5 @@ requests
 st-gsheets-connection
 plotly.express
 pytz
+jours-feries-france
 

@@ -13,7 +13,8 @@ from fonctions import (
     ajouter_feuille_formatee, 
     ajouter_feuille_dcr,       
     afficher_gestion_liste_bs,
-    afficher_gestion_initiales
+    afficher_gestion_initiales,
+    get_n_derniers_jours_ouvres
 )
 
 st.set_page_config(page_title="Générateur d'Exports CEE", layout="wide")
@@ -129,7 +130,7 @@ with tab_generateur:
             st.success(f"Fichier chargé ! ({len(df_source)} lignes)")
 
             for col in df_source.columns:
-                if 'date' in str(col).lower(): df_source[col] = pd.to_datetime(df_source[col], errors='coerce')
+                if 'date' in str(col).lower(): df_source[col] = pd.to_datetime(df_source[col], errors='coerce', dayfirst=True)
 
             st.markdown("### 📊 Synthèse Globale de l'import (Avant filtres)")
             afficher_tableau_synthese(df_source, "Données brutes")
@@ -198,7 +199,16 @@ with tab_generateur:
             if 'Date réception' in df_export.columns and date_prio is not None:
                 dates_reception = pd.to_datetime(df_export['Date réception']).dt.date
                 mask_prio = dates_reception <= date_prio
-                
+
+            # --- Indicateur visuel : dossier dans/hors de la fenêtre des 5 derniers jours ouvrés ---
+            if 'Date réception' in df_export.columns:
+                date_du_jour = datetime.now(TZ_FRANCE).date()
+                jours_ouvres = get_n_derniers_jours_ouvres(date_du_jour, n=5)
+                borne_min = min(jours_ouvres)
+                dates_reception_delai = pd.to_datetime(df_export['Date réception']).dt.date
+                mask_dans_delai = (dates_reception_delai >= borne_min) & (dates_reception_delai <= date_du_jour)
+                df_export.insert(0, '⏱️ Délai', mask_dans_delai.map({True: "✅ Dans les délais", False: "⚠️ Hors délai"}))
+
             df_export.insert(0, 'Prioritaire', mask_prio)
 
             config_colonnes = {
@@ -206,6 +216,11 @@ with tab_generateur:
                     "⭐ Prioritaire",
                     help="Cochez pour placer ce dossier dans la liste prioritaire",
                     default=False
+                ),
+                "⏱️ Délai": st.column_config.TextColumn(
+                    "⏱️ Délai",
+                    help="Basé sur la Date réception, par rapport aux 5 derniers jours ouvrés",
+                    width="small"
                 ),
                 "Bénéficiaire": st.column_config.TextColumn(
                     "Bénéficiaire",
@@ -250,8 +265,9 @@ with tab_generateur:
                 mask_prio_final = df_export_modifie['Prioritaire']
 
             # 3. Séparation finale avec le masque global
-            df_prio = df_export_modifie[mask_prio_final].drop(columns=['Prioritaire']).copy()
-            df_classique = df_export_modifie[~mask_prio_final].drop(columns=['Prioritaire']).copy()
+            colonnes_a_retirer = [c for c in ['Prioritaire', '⏱️ Délai'] if c in df_export_modifie.columns]
+            df_prio = df_export_modifie[mask_prio_final].drop(columns=colonnes_a_retirer).copy()
+            df_classique = df_export_modifie[~mask_prio_final].drop(columns=colonnes_a_retirer).copy()
             # ---------------------------------------------------------
             # ---------------------------------------------------------
 
