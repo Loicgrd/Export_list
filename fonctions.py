@@ -111,13 +111,13 @@ def afficher_gestion_base(sheet_name, df_gsheet, conn, spreadsheet_url, dict_bs)
                 st.cache_data.clear()
                 st.rerun()
 
-def sauvegarder_admin(l_docs, l_coms, conn, spreadsheet_url):
+def sauvegarder_admin(l_docs, l_coms, conn, spreadsheet_url, worksheet="ADMIN"):
     max_len = max(len(l_docs), len(l_coms))
     df_new = pd.DataFrame({
         "Nom du document": l_docs + [""] * (max_len - len(l_docs)),
         "Commentaire": l_coms + [""] * (max_len - len(l_coms))
     })
-    conn.update(spreadsheet=spreadsheet_url, worksheet="ADMIN", data=df_new)
+    conn.update(spreadsheet=spreadsheet_url, worksheet=worksheet, data=df_new)
     st.cache_data.clear()
     st.rerun()
 

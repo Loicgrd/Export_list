@@ -36,9 +36,9 @@ def load_worksheet(sheet_name):
         return {}, pd.DataFrame(columns=["Nom", "SIREN", "Date d'ajout"])
 
 @st.cache_data(ttl=10)
-def load_admin():
+def load_admin(sheet_name="ADMIN"):
     try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="ADMIN")
+        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name)
         if df.empty: return [], []
         mots_docs = [str(x).strip() for x in df.get("Nom du document", pd.Series()).dropna() if str(x).strip() and str(x).strip().lower() != 'nan']
         mots_coms = [str(x).strip() for x in df.get("Commentaire", pd.Series()).dropna() if str(x).strip() and str(x).strip().lower() != 'nan']
@@ -71,14 +71,15 @@ def load_liste_initiales():
 # --- Initialisation ---
 dict_confort, df_confort_gsheet = load_worksheet("Confort")
 dict_national, df_national_gsheet = load_worksheet("CDC") 
-mots_docs_admin, mots_coms_admin = load_admin()
+mots_docs_admin_dcr, mots_coms_admin_dcr = load_admin("ADMIN")
+mots_docs_admin_nat, mots_coms_admin_nat = load_admin("ADMIN_NATIONAL")
 dict_bs_global, df_liste_bs_gsheet = load_liste_bs()
 dict_initiales, df_initiales_gsheet = load_liste_initiales() 
 
 st.title("Générateur d'Exports CEE")
 
-tab_generateur, tab_confort, tab_national, tab_admin, tab_parametres = st.tabs([
-    "📊 Générateur", "⚙️ Base Confort", "⚙️ Base National", "🛡️ Filtres ADMIN", "⚙️ Paramètres"
+tab_generateur, tab_confort, tab_national, tab_admin_dcr, tab_admin_nat, tab_parametres = st.tabs([
+    "📊 Générateur", "⚙️ Base Confort", "⚙️ Base National", "🛡️ Filtre ADMIN DCR", "🛡️ Filtre ADMIN NATIONAL", "⚙️ Paramètres"
 ])
 
 with tab_confort: afficher_gestion_base("Confort", df_confort_gsheet, conn, SPREADSHEET_URL, dict_bs_global)
@@ -94,29 +95,43 @@ with tab_parametres:
     with sous_tab_init:
         afficher_gestion_initiales(df_initiales_gsheet, conn, SPREADSHEET_URL)
 
-with tab_admin:
-    st.header("🛠️ Mots-clés pour le tri automatique ADMIN")
+def afficher_filtre_admin(titre, mots_docs, mots_coms, worksheet, key_prefix):
+    st.header(titre)
     col_d, col_c = st.columns(2)
     with col_d:
         st.subheader("📄 Colonne 'Nom du document'")
-        nouveau_doc = st.text_input("Ajouter un mot-clé (ex: Visa) :")
-        if st.button("➕ Ajouter", key="add_doc") and nouveau_doc:
-            if nouveau_doc not in mots_docs_admin: sauvegarder_admin(mots_docs_admin + [nouveau_doc], mots_coms_admin, conn, SPREADSHEET_URL)
-        if mots_docs_admin:
-            a_suppr_doc = st.multiselect("Supprimer :", mots_docs_admin, key="suppr_doc")
-            if st.button("🗑️ Enlever", key="btn_suppr_doc") and a_suppr_doc:
-                sauvegarder_admin([m for m in mots_docs_admin if m not in a_suppr_doc], mots_coms_admin, conn, SPREADSHEET_URL)
-            st.dataframe(pd.DataFrame(mots_docs_admin, columns=["Mots-clés (Documents)"]), hide_index=True, use_container_width=True)
+        nouveau_doc = st.text_input("Ajouter un mot-clé (ex: Visa) :", key=f"input_doc_{key_prefix}")
+        if st.button("➕ Ajouter", key=f"add_doc_{key_prefix}") and nouveau_doc:
+            if nouveau_doc not in mots_docs: sauvegarder_admin(mots_docs + [nouveau_doc], mots_coms, conn, SPREADSHEET_URL, worksheet=worksheet)
+        if mots_docs:
+            a_suppr_doc = st.multiselect("Supprimer :", mots_docs, key=f"suppr_doc_{key_prefix}")
+            if st.button("🗑️ Enlever", key=f"btn_suppr_doc_{key_prefix}") and a_suppr_doc:
+                sauvegarder_admin([m for m in mots_docs if m not in a_suppr_doc], mots_coms, conn, SPREADSHEET_URL, worksheet=worksheet)
+            st.dataframe(pd.DataFrame(mots_docs, columns=["Mots-clés (Documents)"]), hide_index=True, use_container_width=True)
     with col_c:
         st.subheader("💬 Colonne 'Commentaire'")
-        nouveau_com = st.text_input("Ajouter un mot-clé (ex: Abandon) :")
-        if st.button("➕ Ajouter", key="add_com") and nouveau_com:
-            if nouveau_com not in mots_coms_admin: sauvegarder_admin(mots_docs_admin, mots_coms_admin + [nouveau_com], conn, SPREADSHEET_URL)
-        if mots_coms_admin:
-            a_suppr_com = st.multiselect("Supprimer :", mots_coms_admin, key="suppr_com")
-            if st.button("🗑️ Enlever", key="btn_suppr_com") and a_suppr_com:
-                sauvegarder_admin(mots_docs_admin, [m for m in mots_coms_admin if m not in a_suppr_com], conn, SPREADSHEET_URL)
-            st.dataframe(pd.DataFrame(mots_coms_admin, columns=["Mots-clés (Commentaires)"]), hide_index=True, use_container_width=True)
+        nouveau_com = st.text_input("Ajouter un mot-clé (ex: Abandon) :", key=f"input_com_{key_prefix}")
+        if st.button("➕ Ajouter", key=f"add_com_{key_prefix}") and nouveau_com:
+            if nouveau_com not in mots_coms: sauvegarder_admin(mots_docs, mots_coms + [nouveau_com], conn, SPREADSHEET_URL, worksheet=worksheet)
+        if mots_coms:
+            a_suppr_com = st.multiselect("Supprimer :", mots_coms, key=f"suppr_com_{key_prefix}")
+            if st.button("🗑️ Enlever", key=f"btn_suppr_com_{key_prefix}") and a_suppr_com:
+                sauvegarder_admin(mots_docs, [m for m in mots_coms if m not in a_suppr_com], conn, SPREADSHEET_URL, worksheet=worksheet)
+            st.dataframe(pd.DataFrame(mots_coms, columns=["Mots-clés (Commentaires)"]), hide_index=True, use_container_width=True)
+
+with tab_admin_dcr:
+    afficher_filtre_admin(
+        "🛠️ Mots-clés pour le tri automatique ADMIN DCR",
+        mots_docs_admin_dcr, mots_coms_admin_dcr,
+        worksheet="ADMIN", key_prefix="dcr"
+    )
+
+with tab_admin_nat:
+    afficher_filtre_admin(
+        "🛠️ Mots-clés pour le tri automatique ADMIN NATIONAL",
+        mots_docs_admin_nat, mots_coms_admin_nat,
+        worksheet="ADMIN_NATIONAL", key_prefix="nat"
+    )
 
 # ==========================================
 # ONGLET PRINCIPAL : GÉNÉRATEUR
@@ -148,35 +163,33 @@ with tab_generateur:
             if 'Numéro dossier' in df_reste.columns and not df_confort.empty:
                 df_reste = df_reste[~df_reste['Numéro dossier'].isin(df_confort['Numéro dossier'])]
 
-            # 2. On applique le filtre ADMIN sur TOUT le reste (National + DCR)
-            mask_admin = pd.Series(False, index=df_reste.index)
-            if 'Nom du document' in df_reste.columns and mots_docs_admin:
-                for mot in mots_docs_admin: mask_admin = mask_admin | df_reste['Nom du document'].astype(str).str.contains(mot, case=False, na=False, regex=False)
-            if 'Commentaire' in df_reste.columns and mots_coms_admin:
-                for mot in mots_coms_admin: mask_admin = mask_admin | df_reste['Commentaire'].astype(str).str.contains(mot, case=False, na=False, regex=False)
-            
-            df_admin = df_reste[mask_admin].copy()
-            df_sans_admin = df_reste[~mask_admin].copy()
-            
-            # 3. Séparation des ADMINs en ADMIN National et ADMIN DCR
-            df_admin_national = pd.DataFrame()
-            df_admin_dcr = pd.DataFrame()
-            if not df_admin.empty and 'Bénéficiaire' in df_admin.columns:
-                mask_admin_nat = df_admin['Bénéficiaire'].isin(dict_national.keys())
-                df_admin_national = df_admin[mask_admin_nat].copy()
-                df_admin_dcr = df_admin[~mask_admin_nat].copy()
+            # 2. Séparation du reste par bailleur : National vs DCR
+            if 'Bénéficiaire' in df_reste.columns:
+                mask_nat_global = df_reste['Bénéficiaire'].isin(dict_national.keys())
+                df_reste_nat = df_reste[mask_nat_global].copy()
+                df_reste_dcr = df_reste[~mask_nat_global].copy()
             else:
-                df_admin_dcr = df_admin.copy()
+                df_reste_nat = pd.DataFrame(columns=df_reste.columns)
+                df_reste_dcr = df_reste.copy()
 
-            # 4. Séparation du reste (les normaux) en National et DCR
-            df_national = pd.DataFrame()
-            df_export = pd.DataFrame() # df_export deviendra la base DCR pure
-            if not df_sans_admin.empty and 'Bénéficiaire' in df_sans_admin.columns:
-                mask_nat = df_sans_admin['Bénéficiaire'].isin(dict_national.keys())
-                df_national = df_sans_admin[mask_nat].copy()
-                df_export = df_sans_admin[~mask_nat].copy()
-            else:
-                df_export = df_sans_admin.copy()
+            # 3. Application des filtres ADMIN propres à chaque branche
+            def calculer_masque_admin(df, mots_docs, mots_coms):
+                mask = pd.Series(False, index=df.index)
+                if 'Nom du document' in df.columns and mots_docs:
+                    for mot in mots_docs: mask = mask | df['Nom du document'].astype(str).str.contains(mot, case=False, na=False, regex=False)
+                if 'Commentaire' in df.columns and mots_coms:
+                    for mot in mots_coms: mask = mask | df['Commentaire'].astype(str).str.contains(mot, case=False, na=False, regex=False)
+                return mask
+
+            # Branche National → mots-clés de la feuille ADMIN_NATIONAL
+            mask_admin_nat = calculer_masque_admin(df_reste_nat, mots_docs_admin_nat, mots_coms_admin_nat)
+            df_admin_national = df_reste_nat[mask_admin_nat].copy()
+            df_national = df_reste_nat[~mask_admin_nat].copy()
+
+            # Branche DCR → mots-clés de la feuille ADMIN (DCR)
+            mask_admin_dcr = calculer_masque_admin(df_reste_dcr, mots_docs_admin_dcr, mots_coms_admin_dcr)
+            df_admin_dcr = df_reste_dcr[mask_admin_dcr].copy()
+            df_export = df_reste_dcr[~mask_admin_dcr].copy() # df_export = base DCR pure
 
             # 5. Fonction de tri général
             def trier_df(df):
