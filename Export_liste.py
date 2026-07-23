@@ -23,7 +23,7 @@ TZ_FRANCE = pytz.timezone('Europe/Paris')
 SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1pkj6frncXmzUUVAClAWp63HY_UpQUahOCLz19w-UseI/edit?usp=sharing"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=120)
 def load_worksheet(sheet_name):
     try:
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name)
@@ -35,18 +35,24 @@ def load_worksheet(sheet_name):
     except Exception as e:
         return {}, pd.DataFrame(columns=["Nom", "SIREN", "Date d'ajout"])
 
-@st.cache_data(ttl=10)
-def load_admin(sheet_name="ADMIN"):
-    try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name)
-        if df.empty: return [], []
-        mots_docs = [str(x).strip() for x in df.get("Nom du document", pd.Series()).dropna() if str(x).strip() and str(x).strip().lower() != 'nan']
-        mots_coms = [str(x).strip() for x in df.get("Commentaire", pd.Series()).dropna() if str(x).strip() and str(x).strip().lower() != 'nan']
-        return mots_docs, mots_coms
-    except Exception as e:
-        return [], []
+@st.cache_data(ttl=120)
+def load_admin_toutes():
+    """Charge en un seul passage les mots-clés ADMIN (DCR) et ADMIN_NATIONAL,
+    pour limiter le nombre de lectures Google Sheets au réveil de l'app."""
+    def _lire(sheet_name):
+        try:
+            df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name)
+            if df.empty: return [], []
+            mots_docs = [str(x).strip() for x in df.get("Nom du document", pd.Series()).dropna() if str(x).strip() and str(x).strip().lower() != 'nan']
+            mots_coms = [str(x).strip() for x in df.get("Commentaire", pd.Series()).dropna() if str(x).strip() and str(x).strip().lower() != 'nan']
+            return mots_docs, mots_coms
+        except Exception:
+            return [], []
+    docs_dcr, coms_dcr = _lire("ADMIN")
+    docs_nat, coms_nat = _lire("ADMIN_NATIONAL")
+    return docs_dcr, coms_dcr, docs_nat, coms_nat
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=300)
 def load_liste_bs():
     try:
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Liste_BS")
@@ -58,7 +64,7 @@ def load_liste_bs():
     except Exception as e:
         return {}, pd.DataFrame(columns=["SIREN", "Nom BS"])
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=300)
 def load_liste_initiales():
     try:
         df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Liste_initiales")
@@ -71,8 +77,7 @@ def load_liste_initiales():
 # --- Initialisation ---
 dict_confort, df_confort_gsheet = load_worksheet("Confort")
 dict_national, df_national_gsheet = load_worksheet("CDC") 
-mots_docs_admin_dcr, mots_coms_admin_dcr = load_admin("ADMIN")
-mots_docs_admin_nat, mots_coms_admin_nat = load_admin("ADMIN_NATIONAL")
+mots_docs_admin_dcr, mots_coms_admin_dcr, mots_docs_admin_nat, mots_coms_admin_nat = load_admin_toutes()
 dict_bs_global, df_liste_bs_gsheet = load_liste_bs()
 dict_initiales, df_initiales_gsheet = load_liste_initiales() 
 
@@ -102,7 +107,8 @@ def afficher_filtre_admin(titre, mots_docs, mots_coms, worksheet, key_prefix):
         st.subheader("📄 Colonne 'Nom du document'")
         nouveau_doc = st.text_input("Ajouter un mot-clé (ex: Visa) :", key=f"input_doc_{key_prefix}")
         if st.button("➕ Ajouter", key=f"add_doc_{key_prefix}") and nouveau_doc:
-            if nouveau_doc not in mots_docs: sauvegarder_admin(mots_docs + [nouveau_doc], mots_coms, conn, SPREADSHEET_URL, worksheet=worksheet)
+            if nouveau_doc not in mots_docs:
+                sauvegarder_admin(mots_docs + [nouveau_doc], mots_coms, conn, SPREADSHEET_URL, worksheet=worksheet)
         if mots_docs:
             a_suppr_doc = st.multiselect("Supprimer :", mots_docs, key=f"suppr_doc_{key_prefix}")
             if st.button("🗑️ Enlever", key=f"btn_suppr_doc_{key_prefix}") and a_suppr_doc:
@@ -112,7 +118,8 @@ def afficher_filtre_admin(titre, mots_docs, mots_coms, worksheet, key_prefix):
         st.subheader("💬 Colonne 'Commentaire'")
         nouveau_com = st.text_input("Ajouter un mot-clé (ex: Abandon) :", key=f"input_com_{key_prefix}")
         if st.button("➕ Ajouter", key=f"add_com_{key_prefix}") and nouveau_com:
-            if nouveau_com not in mots_coms: sauvegarder_admin(mots_docs, mots_coms + [nouveau_com], conn, SPREADSHEET_URL, worksheet=worksheet)
+            if nouveau_com not in mots_coms:
+                sauvegarder_admin(mots_docs, mots_coms + [nouveau_com], conn, SPREADSHEET_URL, worksheet=worksheet)
         if mots_coms:
             a_suppr_com = st.multiselect("Supprimer :", mots_coms, key=f"suppr_com_{key_prefix}")
             if st.button("🗑️ Enlever", key=f"btn_suppr_com_{key_prefix}") and a_suppr_com:
