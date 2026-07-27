@@ -99,17 +99,31 @@ def resoudre_cible(bailleur, region):
         return "National"
     return str(region).strip() if pd.notna(region) else ""
 
-def construire_mail(num, bailleur, region, date_rea):
+def construire_mail(num, bailleur, region, date_rea, critique=False):
     date_str = date_rea.strftime('%d/%m/%Y') if pd.notna(date_rea) else 'inconnue'
-    sujet = f"[Supervision CEE] Dossier {num} en supervision - non contrôlé"
-    corps = (
-        f"Bonjour,\n\n"
-        f"Le dossier {num} (bailleur : {bailleur}, région : {region}) figure dans la liste de supervision "
-        f"et n'est actuellement pas en contrôle.\n"
-        f"Date réelle de réalisation : {date_str}.\n\n"
-        f"Merci de prendre les dispositions nécessaires.\n\n"
-        f"Cordialement,\nL'équipe CEE"
-    )
+    retard_mois = int((pd.Timestamp.today() - date_rea).days / 30.44) if pd.notna(date_rea) else None
+    if critique:
+        sujet = f"[URGENT - Supervision CEE] Dossier {num} - éligibilité probablement perdue"
+        corps = (
+            f"Bonjour,\n\n"
+            f"Le dossier {num} (bailleur : {bailleur}, région : {region}) figure dans la liste de supervision, "
+            f"n'est toujours pas en contrôle, et sa date réelle de réalisation ({date_str}"
+            + (f", soit environ {retard_mois} mois" if retard_mois else "") + ") dépasse 12 mois.\n"
+            f"Le dossier est donc probablement devenu non éligible en l'état.\n\n"
+            f"Une action urgente est nécessaire pour statuer sur ce dossier.\n\n"
+            f"Cordialement,\nL'équipe CEE"
+        )
+    else:
+        sujet = f"[Supervision CEE] Dossier {num} en supervision - non contrôlé"
+        corps = (
+            f"Bonjour,\n\n"
+            f"Le dossier {num} (bailleur : {bailleur}, région : {region}) figure dans la liste de supervision "
+            f"et n'est actuellement pas en contrôle.\n"
+            f"Date réelle de réalisation : {date_str}"
+            + (f" (soit environ {retard_mois} mois)." if retard_mois else ".") + "\n\n"
+            f"Merci de prendre les dispositions nécessaires.\n\n"
+            f"Cordialement,\nL'équipe CEE"
+        )
     return sujet, corps
 
 def lien_mailto(destinataires, sujet, corps):
@@ -362,6 +376,23 @@ with tab_mails:
             st.rerun()
 
     st.divider()
+    st.subheader("🤖 Envoi automatique (optionnel)")
+    if smtp_est_configure():
+        st.success("✅ SMTP configuré — l'envoi automatique depuis la boîte générique est actif.")
+    else:
+        st.markdown("""
+        Sans configuration, les alertes s'envoient via des **liens qui ouvrent Outlook prérempli** (le mail part de votre boîte, vous cliquez sur Envoyer).
+
+        Pour un envoi **automatique depuis une boîte générique**, demandez à votre service informatique d'activer
+        **SMTP AUTH** sur cette boîte (Exchange Online), puis ajoutez dans `.streamlit/secrets.toml` :
+        ```toml
+        [smtp]
+        user = "alerte-cee@votre-domaine.fr"
+        password = "mot-de-passe-ou-mot-de-passe-application"
+        # host = "smtp.office365.com" (défaut)
+        # port = 587 (défaut)
+        ```
+        """)
 
 with tab_tri:
     # Zone de dépôt des fichiers
@@ -638,21 +669,27 @@ with tab_tri:
             # en gardant la date réelle de réalisation la plus récente
             base = base.sort_values('Date réelle de réalisation', ascending=False).drop_duplicates(subset='_id')
 
-            # 4. Critère : date réelle de réalisation datant de moins de 3 mois
-            seuil_3_mois = pd.Timestamp.today() - pd.DateOffset(months=3)
-            base = base[base['Date réelle de réalisation'] >= seuil_3_mois]
+            # 4. Critère : date réelle de réalisation datant de PLUS de 9 mois
+            # (dossier réalisé depuis longtemps mais toujours hors lot de contrôle → retard à signaler)
+            seuil_9_mois = pd.Timestamp.today() - pd.DateOffset(months=9)
+            base = base[base['Date réelle de réalisation'] <= seuil_9_mois]
 
             if base.empty:
-                st.info("Aucun dossier de la liste de supervision n'est hors lot de contrôle (NEANT) avec une date réelle de réalisation de moins de 3 mois.")
+                st.info("Aucun dossier de la liste de supervision n'est hors lot de contrôle (NEANT) avec une date réelle de réalisation de plus de 9 mois.")
             else:
-                # 5. Résolution du destinataire : Confort > National > région
+                # 5. Au-delà de 12 mois, le dossier est probablement devenu non éligible en l'état → mail dédié plus urgent
+                seuil_12_mois = pd.Timestamp.today() - pd.DateOffset(months=12)
+                base['Critique'] = base['Date réelle de réalisation'] <= seuil_12_mois
+                base['Niveau'] = base['Critique'].map({True: "🔴 Critique (>12 mois)", False: "🟠 Retard (9-12 mois)"})
+
+                # 6. Résolution du destinataire : Confort > National > région
                 base['Cible'] = base.apply(lambda r: resoudre_cible(r['Organisme'], r['DCTS']), axis=1)
                 base['Destinataires'] = base['Cible'].map(lambda c: "; ".join(dict_emails.get(c, [])))
                 base['Déjà alerté'] = base['_id'].isin(dossiers_deja_alertes)
 
                 nb_deja = int(base['Déjà alerté'].sum())
                 a_traiter = base[~base['Déjà alerté']].copy()
-                st.write(f"**{len(base)} dossier(s) éligible(s)** (hors lot de contrôle 'NEANT' + date réelle < 3 mois), dont **{nb_deja} déjà alerté(s)** et **{len(a_traiter)} à traiter**.")
+                st.write(f"**{len(base)} dossier(s) éligible(s)** (hors lot de contrôle 'NEANT' + date réelle > 9 mois), dont **{nb_deja} déjà alerté(s)** et **{len(a_traiter)} à traiter**.")
 
                 sans_dest = a_traiter[a_traiter['Destinataires'] == '']
                 if not sans_dest.empty:
@@ -664,19 +701,20 @@ with tab_tri:
                     st.info("Aucun dossier à traiter avec un destinataire configuré.")
                 else:
                     # Construction des mails et du tableau interactif
-                    mails = a_envoyer.apply(lambda r: construire_mail(r['_id'], r['Organisme'], r['DCTS'], r['Date réelle de réalisation']), axis=1)
+                    mails = a_envoyer.apply(lambda r: construire_mail(r['_id'], r['Organisme'], r['DCTS'], r['Date réelle de réalisation'], critique=r['Critique']), axis=1)
                     a_envoyer['✉️ Ouvrir dans Outlook'] = [
                         lien_mailto([e.strip() for e in row['Destinataires'].split(';')], sujet, corps)
                         for (sujet, corps), (_, row) in zip(mails, a_envoyer.iterrows())
                     ]
                     a_envoyer.insert(0, 'Sélection', True)
 
-                    df_affichage = a_envoyer[['Sélection', '_id', 'Organisme', 'DCTS', 'Date réelle de réalisation', 'Cible', 'Destinataires', '✉️ Ouvrir dans Outlook']].rename(columns={'_id': 'N°dossier'})
+                    df_affichage = a_envoyer[['Sélection', '_id', 'Organisme', 'DCTS', 'Date réelle de réalisation', 'Niveau', 'Cible', 'Destinataires', '✉️ Ouvrir dans Outlook']].rename(columns={'_id': 'N°dossier'})
                     edited = st.data_editor(
                         df_affichage,
                         column_config={
                             "Sélection": st.column_config.CheckboxColumn("✅", help="Inclure ce dossier dans l'envoi / le marquage"),
                             "Date réelle de réalisation": st.column_config.DateColumn("Date réalisation", format="DD/MM/YYYY"),
+                            "Niveau": st.column_config.TextColumn("Niveau", help="9-12 mois = retard signalé ; >12 mois = éligibilité probablement perdue, mail urgent dédié"),
                             "✉️ Ouvrir dans Outlook": st.column_config.LinkColumn("✉️ Mail", display_text="📧 Ouvrir"),
                         },
                         disabled=[c for c in df_affichage.columns if c != 'Sélection'],
@@ -694,7 +732,7 @@ with tab_tri:
                             if st.button(f"📤 Envoyer automatiquement ({len(selection)} mail(s))", type="primary", disabled=selection.empty):
                                 envoyes, erreurs = [], []
                                 for _, row in selection.iterrows():
-                                    sujet, corps = construire_mail(row['N°dossier'], row['Organisme'], row['DCTS'], row['Date réelle de réalisation'])
+                                    sujet, corps = construire_mail(row['N°dossier'], row['Organisme'], row['DCTS'], row['Date réelle de réalisation'], critique=row['Niveau'].startswith('🔴'))
                                     destinataires = [e.strip() for e in row['Destinataires'].split(';')]
                                     try:
                                         envoyer_smtp(destinataires, sujet, corps)
