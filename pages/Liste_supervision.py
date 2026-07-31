@@ -376,23 +376,7 @@ with tab_mails:
             st.rerun()
 
     st.divider()
-    st.subheader("🤖 Envoi automatique (optionnel)")
-    if smtp_est_configure():
-        st.success("✅ SMTP configuré — l'envoi automatique depuis la boîte générique est actif.")
-    else:
-        st.markdown("""
-        Sans configuration, les alertes s'envoient via des **liens qui ouvrent Outlook prérempli** (le mail part de votre boîte, vous cliquez sur Envoyer).
 
-        Pour un envoi **automatique depuis une boîte générique**, demandez à votre service informatique d'activer
-        **SMTP AUTH** sur cette boîte (Exchange Online), puis ajoutez dans `.streamlit/secrets.toml` :
-        ```toml
-        [smtp]
-        user = "alerte-cee@votre-domaine.fr"
-        password = "mot-de-passe-ou-mot-de-passe-application"
-        # host = "smtp.office365.com" (défaut)
-        # port = 587 (défaut)
-        ```
-        """)
 
 with tab_tri:
     # Zone de dépôt des fichiers
