@@ -155,7 +155,7 @@ with tab_generateur:
                 if 'date' in str(col).lower(): df_source[col] = pd.to_datetime(df_source[col], errors='coerce', dayfirst=True)
 
             st.markdown("### 📊 Synthèse Globale de l'import (Avant filtres)")
-            afficher_tableau_synthese(df_source, "Données brutes")
+            afficher_tableau_synthese(df_source, "Données brutes", dict_confort, dict_national)
             st.divider()
 
             st.subheader("📅 Analyse et définition de la priorité (DCR)")
