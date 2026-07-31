@@ -239,6 +239,14 @@ def afficher_tableau_synthese(df, titre, dict_confort=None, dict_national=None):
         tableau = pd.crosstab(index=df_synth['Date réception'], columns=df_synth[col_croisement], margins=True, margins_name='Total')
         tableau_final = pd.concat([tableau.drop('Total').sort_index(ascending=True), tableau.loc[['Total']]])
 
+        if interactif:
+            # Ordre des colonnes : DCR (ordre alphabétique) d'abord, puis National, puis Confort,
+            # puis Total en dernier.
+            cols = list(tableau_final.columns)
+            cols_dcr = sorted(c for c in cols if c not in ('National', 'Confort', 'Total'))
+            ordre = cols_dcr + [c for c in ('National', 'Confort') if c in cols] + (['Total'] if 'Total' in cols else [])
+            tableau_final = tableau_final[ordre]
+
         # --- Plage "dans les délais" = du 5ème jour OUVRÉ en arrière jusqu'à AUJOURD'HUI ---
         # (bornes incluses, week-ends et jours fériés compris dans la plage : un dossier reçu
         # un samedi/dimanche reste "dans les délais" s'il tombe dans cette fenêtre)
