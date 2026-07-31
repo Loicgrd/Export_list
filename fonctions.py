@@ -262,33 +262,49 @@ def afficher_tableau_synthese(df, titre, dict_confort=None, dict_national=None):
 
         cellules = event.selection.get("cells", []) if event and event.selection else []
         if not cellules:
-            st.caption("💡 Cliquez sur une case du tableau (hors ligne/colonne Total) pour afficher le détail des pièces correspondantes.")
+            st.caption("💡 Cliquez sur une case du tableau (y compris une case 'Total') pour afficher le détail des pièces correspondantes.")
             return
 
-        row_idx, col_idx = cellules[0]
+        # event.selection["cells"] renvoie des paires [row_idx, col_label] : row_idx est une
+        # position entière (-> tableau_final.index[row_idx]), col_label est DÉJÀ le nom de la
+        # colonne cliquée (pas une position) -> on l'utilise tel quel, sans le ré-indexer.
+        row_idx, dcr_selectionnee = cellules[0]
         date_selectionnee = tableau_final.index[row_idx]
-        dcr_selectionnee = tableau_final.columns[col_idx]
 
-        if date_selectionnee == 'Total' or dcr_selectionnee == 'Total':
-            st.info("La ligne/colonne 'Total' n'a pas de détail associé — sélectionnez une case individuelle.")
-            return
+        # Clic sur une case "Total" : on élargit le détail sur l'axe non filtré au lieu de
+        # refuser d'afficher quoi que ce soit.
+        # - Total en bout de LIGNE (date normale, colonne Total) -> toutes les pièces de ce jour
+        # - Total en bas de COLONNE (ligne Total, DCR normale)  -> toutes les pièces de cette DCR
+        # - Total/Total (coin)                                   -> toutes les pièces de la synthèse
+        mask_detail = pd.Series(True, index=df_synth.index)
+        libelle_selection_parts = []
+        if date_selectionnee != 'Total':
+            mask_detail &= df_synth['Date réception'].apply(lambda d: d.strftime('%d/%m/%Y')) == date_selectionnee
+            libelle_selection_parts.append(date_selectionnee)
+        else:
+            libelle_selection_parts.append("Toutes dates")
+        if dcr_selectionnee != 'Total':
+            mask_detail &= df_synth['DCR'] == dcr_selectionnee
+            libelle_selection_parts.append(dcr_selectionnee)
+        else:
+            libelle_selection_parts.append("Toutes DCR")
 
-        mask_detail = (
-            df_synth['Date réception'].apply(lambda d: d.strftime('%d/%m/%Y')) == date_selectionnee
-        ) & (df_synth['DCR'] == dcr_selectionnee)
         df_detail = df_synth[mask_detail].copy()
+        libelle_selection = " / ".join(libelle_selection_parts)
 
-        def determiner_base(beneficiaire):
+        def determiner_base(beneficiaire, dcr_ligne):
             if beneficiaire in dict_confort: return "Confort"
             if beneficiaire in dict_national: return "National"
-            return dcr_selectionnee
+            return dcr_ligne
 
         if 'Bénéficiaire' in df_detail.columns:
-            df_detail.insert(0, 'Base', df_detail['Bénéficiaire'].map(determiner_base))
+            df_detail.insert(0, 'Base', [
+                determiner_base(b, d) for b, d in zip(df_detail['Bénéficiaire'], df_detail['DCR'])
+            ])
         else:
-            df_detail.insert(0, 'Base', dcr_selectionnee)
+            df_detail.insert(0, 'Base', dcr_selectionnee if dcr_selectionnee != 'Total' else '')
 
-        st.markdown(f"#### 📄 Pièces — {date_selectionnee} / {dcr_selectionnee} ({len(df_detail)} ligne(s))")
+        st.markdown(f"#### 📄 Pièces — {libelle_selection} ({len(df_detail)} ligne(s))")
         config_detail = {"Base": st.column_config.TextColumn("Base", width="small")}
         for col in df_detail.columns:
             col_name_lower = str(col).lower()
