@@ -218,8 +218,25 @@ def afficher_tableau_synthese(df, titre, dict_confort=None, dict_national=None):
         st.markdown(f"**{titre}**")
         df_synth['Date réception'] = pd.to_datetime(df_synth['Date réception'], dayfirst=True).dt.date
         df_synth['DCR'] = df_synth['DCR'].fillna('Non renseigné')
-        
-        tableau = pd.crosstab(index=df_synth['Date réception'], columns=df_synth['DCR'], margins=True, margins_name='Total')
+
+        # Le détail cliquable des pièces n'a de sens que lorsqu'on peut déterminer la base
+        # d'appartenance (Confort / National / DCR) de chaque bénéficiaire, donc uniquement
+        # quand les deux dictionnaires sont fournis (typiquement : la synthèse globale, avant filtres).
+        interactif = dict_confort is not None and dict_national is not None
+
+        if interactif and 'Bénéficiaire' in df_synth.columns:
+            # Colonne "Base" : Confort/National priment sur la DCR littérale, pour que chaque
+            # pièce ne soit comptée qu'une seule fois (pas de double-comptage DCR + Confort/National).
+            def resoudre_base(row):
+                if row['Bénéficiaire'] in dict_confort: return "Confort"
+                if row['Bénéficiaire'] in dict_national: return "National"
+                return row['DCR']
+            df_synth['Base'] = df_synth.apply(resoudre_base, axis=1)
+            col_croisement = 'Base'
+        else:
+            col_croisement = 'DCR'
+
+        tableau = pd.crosstab(index=df_synth['Date réception'], columns=df_synth[col_croisement], margins=True, margins_name='Total')
         tableau_final = pd.concat([tableau.drop('Total').sort_index(ascending=True), tableau.loc[['Total']]])
 
         # --- Plage "dans les délais" = du 5ème jour OUVRÉ en arrière jusqu'à AUJOURD'HUI ---
@@ -243,11 +260,6 @@ def afficher_tableau_synthese(df, titre, dict_confort=None, dict_national=None):
                 else: styles.append('text-align: center; background-color: #f8d7da; color: #721c24')
             return styles
 
-        # Le détail cliquable des pièces n'a de sens que lorsqu'on peut déterminer la base
-        # d'appartenance (Confort / National / DCR) de chaque bénéficiaire, donc uniquement
-        # quand les deux dictionnaires sont fournis (typiquement : la synthèse globale, avant filtres).
-        interactif = dict_confort is not None and dict_national is not None
-
         if not interactif:
             st.dataframe(tableau_final.style.apply(coloriser_delais, axis=1), use_container_width=True)
             return
@@ -268,13 +280,13 @@ def afficher_tableau_synthese(df, titre, dict_confort=None, dict_national=None):
         # event.selection["cells"] renvoie des paires [row_idx, col_label] : row_idx est une
         # position entière (-> tableau_final.index[row_idx]), col_label est DÉJÀ le nom de la
         # colonne cliquée (pas une position) -> on l'utilise tel quel, sans le ré-indexer.
-        row_idx, dcr_selectionnee = cellules[0]
+        row_idx, base_selectionnee = cellules[0]
         date_selectionnee = tableau_final.index[row_idx]
 
         # Clic sur une case "Total" : on élargit le détail sur l'axe non filtré au lieu de
         # refuser d'afficher quoi que ce soit.
         # - Total en bout de LIGNE (date normale, colonne Total) -> toutes les pièces de ce jour
-        # - Total en bas de COLONNE (ligne Total, DCR normale)  -> toutes les pièces de cette DCR
+        # - Total en bas de COLONNE (ligne Total, base normale)  -> toutes les pièces de cette base
         # - Total/Total (coin)                                   -> toutes les pièces de la synthèse
         mask_detail = pd.Series(True, index=df_synth.index)
         libelle_selection_parts = []
@@ -283,26 +295,19 @@ def afficher_tableau_synthese(df, titre, dict_confort=None, dict_national=None):
             libelle_selection_parts.append(date_selectionnee)
         else:
             libelle_selection_parts.append("Toutes dates")
-        if dcr_selectionnee != 'Total':
-            mask_detail &= df_synth['DCR'] == dcr_selectionnee
-            libelle_selection_parts.append(dcr_selectionnee)
+        if base_selectionnee != 'Total':
+            mask_detail &= df_synth[col_croisement] == base_selectionnee
+            libelle_selection_parts.append(base_selectionnee)
         else:
-            libelle_selection_parts.append("Toutes DCR")
+            libelle_selection_parts.append("Toutes bases")
 
         df_detail = df_synth[mask_detail].copy()
         libelle_selection = " / ".join(libelle_selection_parts)
 
-        def determiner_base(beneficiaire, dcr_ligne):
-            if beneficiaire in dict_confort: return "Confort"
-            if beneficiaire in dict_national: return "National"
-            return dcr_ligne
-
-        if 'Bénéficiaire' in df_detail.columns:
-            df_detail.insert(0, 'Base', [
-                determiner_base(b, d) for b, d in zip(df_detail['Bénéficiaire'], df_detail['DCR'])
-            ])
+        if 'Base' not in df_detail.columns:
+            df_detail.insert(0, 'Base', base_selectionnee if base_selectionnee != 'Total' else '')
         else:
-            df_detail.insert(0, 'Base', dcr_selectionnee if dcr_selectionnee != 'Total' else '')
+            df_detail.insert(0, 'Base', df_detail.pop('Base'))
 
         st.markdown(f"#### 📄 Pièces — {libelle_selection} ({len(df_detail)} ligne(s))")
         config_detail = {"Base": st.column_config.TextColumn("Base", width="small")}
