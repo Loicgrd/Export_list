@@ -509,26 +509,36 @@ with tab_tri:
                     # dossiers marqués NEANT seraient groupés ensemble par erreur (le groupby les
                     # traite comme un lot unique), leur donnant tous la même date de tri minimale
                     # alors qu'ils n'ont aucun rapport entre eux.
+                    #
+                    # La date de référence d'un lot est calculée sur TOUTES ses lignes (tous stades
+                    # confondus), pas seulement celles encore à 3F. Un lot peut contenir des dossiers
+                    # déjà à un stade avancé (ex: Stade 5) datant de bien avant les dossiers encore à
+                    # 3F du même lot — ignorer ces lignes ferait paraître le lot plus récent qu'il ne
+                    # l'est réellement et le priverait à tort du statut prioritaire.
+                    df_ctrl_lots_reels = df_ctrl[
+                        df_ctrl[col_ctr_lot].astype(str).str.strip().str.upper() != 'NEANT'
+                    ].copy()
+                    dates_min_par_lot = df_ctrl_lots_reels.groupby(col_ctr_lot)[col_ctr_date].min().reset_index()
+                    lots_valides = dates_min_par_lot[
+                        dates_min_par_lot[col_ctr_date] <= end_dt
+                    ][col_ctr_lot]
+
+                    # Seuls les dossiers encore à 3F peuvent apparaître dans "df" (l'export ODICEE
+                    # stade 3F) : c'est parmi eux qu'on cherche ceux appartenant à un lot valide.
                     df_ctrl_3f = df_ctrl[
                         df_ctrl[col_ctr_stade].astype(str).str.contains('3F', case=False, na=False)
                         & (df_ctrl[col_ctr_lot].astype(str).str.strip().str.upper() != 'NEANT')
                     ].copy()
                     if not df_ctrl_3f.empty:
-                        dates_min_par_lot = df_ctrl_3f.groupby(col_ctr_lot)[col_ctr_date].min().reset_index()
-                        lots_valides = dates_min_par_lot[
-                            dates_min_par_lot[col_ctr_date] <= end_dt
-                        ][col_ctr_lot]
-                    
                         dossiers_valides = df_ctrl_3f[df_ctrl_3f[col_ctr_lot].isin(lots_valides)][col_ctr_id].astype(str).str.strip()
                         df['Temp_ID'] = df[col_odi_id].astype(str).str.strip()
                         mask_cond2bis = df['Temp_ID'].isin(dossiers_valides) & (df['Priorité_Tri'] != 1)
                         df.loc[mask_cond2bis, 'Priorité_Tri'] = 2
 
-                        # Date de référence du lot : date min du lot pour trier les dossiers groupés ensemble.
-                        # Un dossier peut apparaître dans PLUSIEURS lots de contrôle différents (une fiche/lot
-                        # de travaux par lot). Avant cette correction, dict(zip(...)) retenait arbitrairement
-                        # le dernier lot rencontré dans l'ordre du fichier — pas nécessairement le plus ancien.
-                        # On prend maintenant systématiquement la date la plus ancienne parmi tous ses lots.
+                        # Date de référence du lot : date min du lot (tous stades) pour trier les
+                        # dossiers groupés ensemble. Un dossier peut apparaître dans PLUSIEURS lots
+                        # de contrôle différents (une fiche/lot de travaux par lot) : on prend
+                        # systématiquement la date la plus ancienne parmi tous ses lots.
                         df_ctrl_3f_valides = df_ctrl_3f[df_ctrl_3f[col_ctr_lot].isin(lots_valides)][[col_ctr_id, col_ctr_lot]].copy()
                         df_ctrl_3f_valides[col_ctr_id] = df_ctrl_3f_valides[col_ctr_id].astype(str).str.strip()
                         dates_min_par_lot_valides = dates_min_par_lot[dates_min_par_lot[col_ctr_lot].isin(lots_valides)].rename(columns={col_ctr_date: '_date_ref_lot'})
