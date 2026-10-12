@@ -14,7 +14,8 @@ from fonctions import (
     ajouter_feuille_dcr,       
     afficher_gestion_liste_bs,
     afficher_gestion_initiales,
-    get_n_derniers_jours_ouvres
+    get_n_derniers_jours_ouvres,
+    masque_dans_base
 )
 
 st.set_page_config(page_title="Générateur d'Exports CEE", layout="wide")
@@ -164,7 +165,7 @@ with tab_generateur:
             # 1. On isole et retire Confort en premier
             df_confort = pd.DataFrame()
             if 'Bénéficiaire' in df_source.columns:
-                df_confort = df_source[df_source['Bénéficiaire'].isin(dict_confort.keys())].copy()
+                df_confort = df_source[masque_dans_base(df_source['Bénéficiaire'], dict_confort)].copy()
 
             df_reste = df_source.copy()
             if 'Numéro dossier' in df_reste.columns and not df_confort.empty:
@@ -172,7 +173,7 @@ with tab_generateur:
 
             # 2. Séparation du reste par bailleur : National vs DCR
             if 'Bénéficiaire' in df_reste.columns:
-                mask_nat_global = df_reste['Bénéficiaire'].isin(dict_national.keys())
+                mask_nat_global = masque_dans_base(df_reste['Bénéficiaire'], dict_national)
                 df_reste_nat = df_reste[mask_nat_global].copy()
                 df_reste_dcr = df_reste[~mask_nat_global].copy()
             else:
