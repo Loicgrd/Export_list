@@ -5,6 +5,7 @@ import zipfile
 import re
 from xlsxwriter.utility import xl_col_to_name
 from streamlit_gsheets import GSheetsConnection
+from fonctions import normaliser_nom, masque_dans_base
 
 # Configuration de la page
 st.set_page_config(page_title="Tri Supervision ODICEE", layout="wide")
@@ -93,9 +94,10 @@ def enregistrer_mails_envoyes(nouvelles_lignes, df_existant):
 
 def resoudre_cible(bailleur, region):
     """Priorité : base Confort > base National (CDC) > région (DCTS)."""
-    if pd.notna(bailleur) and bailleur in dict_confort:
+    nom = normaliser_nom(bailleur)
+    if nom and nom in {normaliser_nom(k) for k in dict_confort}:
         return "Confort"
-    if pd.notna(bailleur) and bailleur in dict_national:
+    if nom and nom in {normaliser_nom(k) for k in dict_national}:
         return "National"
     return str(region).strip() if pd.notna(region) else ""
 
@@ -586,11 +588,11 @@ with tab_tri:
         # puis National sur le reste, le solde va sur DCR)
         # ─────────────────────────────────────────────
         if col_beneficiaire in df_result.columns:
-            mask_confort = df_result[col_beneficiaire].isin(dict_confort.keys())
+            mask_confort = masque_dans_base(df_result[col_beneficiaire], dict_confort)
             df_confort = df_result[mask_confort].copy()
             df_reste = df_result[~mask_confort].copy()
 
-            mask_national = df_reste[col_beneficiaire].isin(dict_national.keys())
+            mask_national = masque_dans_base(df_reste[col_beneficiaire], dict_national)
             df_national = df_reste[mask_national].copy()
             df_dcr = df_reste[~mask_national].copy()
         else:

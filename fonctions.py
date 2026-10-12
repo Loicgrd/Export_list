@@ -10,6 +10,19 @@ from jours_feries_france import JoursFeries
 TZ_FRANCE = pytz.timezone('Europe/Paris')
 
 
+def normaliser_nom(val):
+    """Clé de comparaison des raisons sociales : sans aucun espace (y compris insécables)
+    et en majuscules, pour que 'SA HLM  AIGUILLON' == 'SA HLM AIGUILLON'."""
+    if pd.isna(val): return ""
+    return re.sub(r'\s+', '', str(val)).upper()
+
+
+def masque_dans_base(serie, dict_base):
+    """Masque booléen : bénéficiaires présents dans la base, comparaison sans espaces."""
+    cles = {normaliser_nom(k) for k in dict_base.keys()}
+    return serie.map(normaliser_nom).isin(cles)
+
+
 def get_n_derniers_jours_ouvres(date_reference, n=5):
     """Retourne les n derniers jours ouvrés (hors week-ends et jours fériés FR)
     se terminant à date_reference (incluse si elle est ouvrée)."""
@@ -227,9 +240,12 @@ def afficher_tableau_synthese(df, titre, dict_confort=None, dict_national=None):
         if interactif and 'Bénéficiaire' in df_synth.columns:
             # Colonne "Base" : Confort/National priment sur la DCR littérale, pour que chaque
             # pièce ne soit comptée qu'une seule fois (pas de double-comptage DCR + Confort/National).
+            cles_confort = {normaliser_nom(k) for k in dict_confort}
+            cles_national = {normaliser_nom(k) for k in dict_national}
             def resoudre_base(row):
-                if row['Bénéficiaire'] in dict_confort: return "Confort"
-                if row['Bénéficiaire'] in dict_national: return "National"
+                nom = normaliser_nom(row['Bénéficiaire'])
+                if nom in cles_confort: return "Confort"
+                if nom in cles_national: return "National"
                 return row['DCR']
             df_synth['Base'] = df_synth.apply(resoudre_base, axis=1)
             col_croisement = 'Base'
